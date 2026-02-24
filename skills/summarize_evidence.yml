@@ -1,0 +1,22 @@
+name: summarize_evidence
+description: Summarize evidence from artifact refs using Bedrock if available, else fallback.
+allowed_phases: [PLAN, VERIFY]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, evidence_refs]
+  properties:
+    run_id: {type: string}
+    evidence_refs: {type: array}
+    max_chars: {type: integer}
+outputs_schema:
+  type: object
+  required: [summary, provider, receipt_id]
+  properties:
+    summary: {type: string}
+    provider: {type: string}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  evidence_refs: [s3://bucket/path/log.txt]
+  max_chars: 400

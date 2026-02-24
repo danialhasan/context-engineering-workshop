@@ -1,0 +1,1 @@
+Smoke run executed PLAN -> ACT -> VERIFY.

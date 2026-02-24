@@ -1,0 +1,24 @@
+name: write_receipt
+description: Write a human-readable receipt node for a completed action.
+allowed_phases: [ACT, VERIFY]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, skill_name, status, summary]
+  properties:
+    run_id: {type: string}
+    skill_name: {type: string}
+    status: {type: string}
+    summary: {type: string}
+    artifact_uri: {type: string}
+outputs_schema:
+  type: object
+  required: [receipt_id, ts_utc]
+  properties:
+    receipt_id: {type: string}
+    ts_utc: {type: string}
+example_payload:
+  run_id: run-demo
+  skill_name: upload_artifact
+  status: success
+  summary: Stored artifact

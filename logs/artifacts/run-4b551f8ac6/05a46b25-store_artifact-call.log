@@ -1,0 +1,5 @@
+STDOUT
+{"artifact_id": "node-bc4e3102d38e", "bytes": 41, "etag": "", "s3_uri": "logs/artifacts/run-4b551f8ac6/c778cf33-log.txt", "sha256": "e96706f39bff5bf5a914772123257b2a53f76b14ad3abd16d081df5521de3b71"}
+
+LOGS
+[2026-02-24T01:46:36.732097+00:00] Stored artifact node-bc4e3102d38e at logs/artifacts/run-4b551f8ac6/c778cf33-log.txt.

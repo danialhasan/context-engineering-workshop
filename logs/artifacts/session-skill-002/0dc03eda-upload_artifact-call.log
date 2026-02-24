@@ -1,0 +1,5 @@
+STDOUT
+{"artifact_id": "node-8b2a3c3cff66", "bytes": 37, "s3_uri": "logs/artifacts/session-skill-002/9e829ced-manual-artifact.txt", "sha256": "82ce324a1fe62cc6447e666f24354fad648f412463a5a8dedfc1d764730251fe"}
+
+LOGS
+[2026-02-24T01:53:18.148389+00:00] Uploaded artifact node-8b2a3c3cff66 to logs/artifacts/session-skill-002/9e829ced-manual-artifact.txt.

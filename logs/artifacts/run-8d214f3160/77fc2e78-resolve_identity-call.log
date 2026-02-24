@@ -1,0 +1,5 @@
+STDOUT
+{"account_id": "000000000000", "arn": "arn:aws:sts::000000000000:assumed-role/workshop/mock-user", "user_id": "mock-user"}
+
+LOGS
+[2026-02-24T01:53:13.440388+00:00] Using mock identity path.

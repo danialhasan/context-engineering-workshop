@@ -1,0 +1,5 @@
+STDOUT
+{"artifact_id": "node-67a4ca71cea5", "bytes": 41, "s3_uri": "logs/artifacts/run-8d214f3160/fe605db8-smoke.log", "sha256": "e96706f39bff5bf5a914772123257b2a53f76b14ad3abd16d081df5521de3b71"}
+
+LOGS
+[2026-02-24T01:53:13.481064+00:00] Uploaded artifact node-67a4ca71cea5 to logs/artifacts/run-8d214f3160/fe605db8-smoke.log.

@@ -1,0 +1,163 @@
+{
+  "session_id": "run-58890326cf",
+  "strategy": "graph_first",
+  "task": "Compile workshop context for verification",
+  "phase": "VERIFY",
+  "selected_items": [
+    {
+      "id": "node-c0544a48dd06",
+      "type": "Artifact",
+      "validated": true,
+      "linked_to_task": true,
+      "selection_reason": "GRAPH_FIRST: validated, linked-to-task, recent:2026-02-24T01:58:11.533798+00:00, type-priority:40",
+      "ts_utc": "2026-02-24T01:58:11.533798+00:00",
+      "summary": "compile_context_pack-call.log",
+      "s3_uri": "logs/artifacts/run-58890326cf/cca17f4b-compile_context_pack-call.log",
+      "sha256": "88cd669591e4d60dd16f999ade334f6c24e13dbb87513b74177b14d6959aefc2",
+      "bytes": 2940,
+      "token_estimate": 119
+    },
+    {
+      "id": "node-862e2cae5526",
+      "type": "Receipt",
+      "validated": true,
+      "linked_to_task": true,
+      "selection_reason": "GRAPH_FIRST: validated, linked-to-task, recent:2026-02-24T01:58:11.530083+00:00, type-priority:85",
+      "ts_utc": "2026-02-24T01:58:11.530083+00:00",
+      "summary": "compile_context_pack succeeded",
+      "status": "success",
+      "token_estimate": 81
+    },
+    {
+      "id": "node-0b185d967d78",
+      "type": "SkillCall",
+      "validated": true,
+      "linked_to_task": true,
+      "selection_reason": "GRAPH_FIRST: validated, linked-to-task, recent:2026-02-24T01:58:11.526670+00:00, type-priority:55",
+      "ts_utc": "2026-02-24T01:58:11.526670+00:00",
+      "summary": "compile_context_pack",
+      "exit_code": 0,
+      "finished_at": "2026-02-24T01:58:11.525483+00:00",
+      "token_estimate": 90
+    },
+    {
+      "id": "node-7edca3f2d062",
+      "type": "SkillCall",
+      "validated": true,
+      "linked_to_task": false,
+      "selection_reason": "GRAPH_FIRST: validated, unlinked, recent:2026-02-24T01:58:11.538958+00:00, type-priority:55",
+      "ts_utc": "2026-02-24T01:58:11.538958+00:00",
+      "summary": "summarize_evidence",
+      "exit_code": 0,
+      "finished_at": "2026-02-24T01:58:11.537491+00:00",
+      "token_estimate": 89
+    },
+    {
+      "id": "session-run-58890326cf",
+      "type": "Session",
+      "validated": true,
+      "linked_to_task": false,
+      "selection_reason": "GRAPH_FIRST: validated, unlinked, recent:2026-02-24T01:58:11.537496+00:00, type-priority:30",
+      "ts_utc": "2026-02-24T01:58:11.537496+00:00",
+      "summary": "{\"session_id\": \"run-58890326cf\"}",
+      "token_estimate": 77
+    },
+    {
+      "id": "node-d75b2f0b9368",
+      "type": "SkillCall",
+      "validated": true,
+      "linked_to_task": false,
+      "selection_reason": "GRAPH_FIRST: validated, unlinked, recent:2026-02-24T01:58:11.514269+00:00, type-priority:55",
+      "ts_utc": "2026-02-24T01:58:11.514269+00:00",
+      "summary": "write_receipt",
+      "exit_code": 0,
+      "finished_at": "2026-02-24T01:58:11.512847+00:00",
+      "token_estimate": 87
+    },
+    {
+      "id": "node-c5d515a877e9",
+      "type": "SkillCall",
+      "validated": true,
+      "linked_to_task": false,
+      "selection_reason": "GRAPH_FIRST: validated, unlinked, recent:2026-02-24T01:58:11.501725+00:00, type-priority:55",
+      "ts_utc": "2026-02-24T01:58:11.501725+00:00",
+      "summary": "upload_artifact",
+      "exit_code": 0,
+      "finished_at": "2026-02-24T01:58:11.500240+00:00",
+      "token_estimate": 88
+    },
+    {
+      "id": "node-47451da0cc3d",
+      "type": "SkillCall",
+      "validated": true,
+      "linked_to_task": false,
+      "selection_reason": "GRAPH_FIRST: validated, unlinked, recent:2026-02-24T01:58:11.487984+00:00, type-priority:55",
+      "ts_utc": "2026-02-24T01:58:11.487984+00:00",
+      "summary": "link_edge",
+      "exit_code": 0,
+      "finished_at": "2026-02-24T01:58:11.486595+00:00",
+      "token_estimate": 86
+    },
+    {
+      "id": "node-c5c46c21b4c8",
+      "type": "SkillCall",
+      "validated": true,
+      "linked_to_task": false,
+      "selection_reason": "GRAPH_FIRST: validated, unlinked, recent:2026-02-24T01:58:11.474422+00:00, type-priority:55",
+      "ts_utc": "2026-02-24T01:58:11.474422+00:00",
+      "summary": "upsert_node",
+      "exit_code": 0,
+      "finished_at": "2026-02-24T01:58:11.473135+00:00",
+      "token_estimate": 87
+    },
+    {
+      "id": "node-22c33ccc2f02",
+      "type": "SkillCall",
+      "validated": true,
+      "linked_to_task": false,
+      "selection_reason": "GRAPH_FIRST: validated, unlinked, recent:2026-02-24T01:58:11.460947+00:00, type-priority:55",
+      "ts_utc": "2026-02-24T01:58:11.460947+00:00",
+      "summary": "upsert_node",
+      "exit_code": 0,
+      "finished_at": "2026-02-24T01:58:11.459895+00:00",
+      "token_estimate": 87
+    },
+    {
+      "id": "node-ae6ca17e6a3a",
+      "type": "SkillCall",
+      "validated": true,
+      "linked_to_task": false,
+      "selection_reason": "GRAPH_FIRST: validated, unlinked, recent:2026-02-24T01:58:11.448008+00:00, type-priority:55",
+      "ts_utc": "2026-02-24T01:58:11.448008+00:00",
+      "summary": "resolve_identity",
+      "exit_code": 0,
+      "finished_at": "2026-02-24T01:58:11.442898+00:00",
+      "token_estimate": 88
+    },
+    {
+      "id": "synthetic-objective",
+      "type": "Objective",
+      "validated": true,
+      "linked_to_task": true,
+      "summary": "Compile workshop context for verification",
+      "selection_reason": "Strategy requirement: include Objective in final context pack.",
+      "ts_utc": "2026-02-24T01:58:29.211279+00:00",
+      "token_estimate": 71
+    }
+  ],
+  "allowed_skills": [
+    "compile_context_pack",
+    "link_edge",
+    "resolve_identity",
+    "summarize_evidence",
+    "upload_artifact",
+    "write_receipt"
+  ],
+  "token_estimate": 1050,
+  "token_budget": 1200,
+  "compaction": {
+    "performed": false,
+    "message": "Bedrock unavailable; compaction skipped."
+  },
+  "generated_at": "2026-02-24T01:58:29.224903+00:00"
+}

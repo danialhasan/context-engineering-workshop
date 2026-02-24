@@ -1,0 +1,25 @@
+name: upsert_node
+description: Create or update a graph node in GraphNodes.
+allowed_phases: [ACT]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, node_type, node_id, payload]
+  properties:
+    run_id: {type: string}
+    node_type: {type: string}
+    node_id: {type: string}
+    payload: {type: object}
+outputs_schema:
+  type: object
+  required: [node_id, version, receipt_id]
+  properties:
+    node_id: {type: string}
+    version: {type: integer}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  node_type: Run
+  node_id: run-demo
+  payload:
+    state: active

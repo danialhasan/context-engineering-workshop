@@ -1,0 +1,20 @@
+name: resolve_identity
+description: Resolve caller identity using STS and return account metadata.
+allowed_phases: [PLAN, ACT, VERIFY]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id]
+  properties:
+    run_id:
+      type: string
+outputs_schema:
+  type: object
+  required: [account_id, arn, user_id, receipt_id]
+  properties:
+    account_id: {type: string}
+    arn: {type: string}
+    user_id: {type: string}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo

@@ -1,0 +1,5 @@
+STDOUT
+{"node_pk": "step-3dfb53", "node_sk": "SkillExecution", "version": 1}
+
+LOGS
+[2026-02-24T01:45:47.142399+00:00] Upserted node step-3dfb53 (SkillExecution).

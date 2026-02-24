@@ -1,0 +1,8 @@
+STDOUT
+{"account_id": "000000000000", "arn": "arn:aws:sts::000000000000:assumed-role/workshop/mock-user", "user_id": "mock-user"}
+
+STDERR
+Output for 'resolve_identity' missing required field 'receipt_id'.
+
+LOGS
+[2026-02-24T01:52:28.222405+00:00] Using mock identity path.

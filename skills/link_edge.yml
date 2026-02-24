@@ -1,0 +1,23 @@
+name: link_edge
+description: Create a typed edge in GraphEdges between two nodes.
+allowed_phases: [ACT, VERIFY]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, from_id, to_id, edge_type]
+  properties:
+    run_id: {type: string}
+    from_id: {type: string}
+    to_id: {type: string}
+    edge_type: {type: string}
+outputs_schema:
+  type: object
+  required: [edge_id, receipt_id]
+  properties:
+    edge_id: {type: string}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  from_id: run-demo
+  to_id: step-001
+  edge_type: RUN_HAS_STEP

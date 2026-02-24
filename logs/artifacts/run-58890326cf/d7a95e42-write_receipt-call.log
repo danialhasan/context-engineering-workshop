@@ -1,0 +1,5 @@
+STDOUT
+{"receipt_id": "node-640b07c61f9b", "ts_utc": "2026-02-24T01:58:11.511700+00:00"}
+
+LOGS
+[2026-02-24T01:58:11.512844+00:00] Wrote explicit receipt node-640b07c61f9b.

@@ -1,0 +1,88 @@
+node_types:
+  Session:
+    required_fields: [session_id]
+  SkillCall:
+    required_fields: [skill_name, inputs, started_at, finished_at, exit_code]
+  Receipt:
+    required_fields: [skill_name, status, summary, ts_utc, checksum, exit_code]
+  Artifact:
+    required_fields: [name, s3_uri, sha256]
+  Error:
+    required_fields: [skill_name, message, ts_utc]
+  Run:
+    required_fields: [state]
+  SkillExecution:
+    required_fields: [skill, status]
+  Claim:
+    required_fields: [state]
+  Task:
+    required_fields: [title]
+  Objective:
+    required_fields: [text]
+  Plan:
+    required_fields: [steps]
+  Decision:
+    required_fields: [summary]
+  TestResult:
+    required_fields: [status]
+  Skill:
+    required_fields: [name, allowed_phases]
+  Summary:
+    required_fields: [summary, ts_utc, source_receipt_count]
+  DoctorProbe:
+    required_fields: [probe]
+
+edge_types:
+  RUN_HAS_STEP:
+    from_types: [Run]
+    to_types: [SkillExecution]
+  STEP_EMITS_RECEIPT:
+    from_types: [SkillExecution]
+    to_types: [Receipt]
+  RECEIPT_POINTS_TO:
+    from_types: [Receipt]
+    to_types: [Artifact]
+  CLAIM_SUPPORTED_BY:
+    from_types: [Claim]
+    to_types: [Receipt]
+  RUN_ASSERTS:
+    from_types: [Run]
+    to_types: [Claim]
+  performed_by:
+    from_types: [SkillCall]
+    to_types: [Session]
+  produces:
+    from_types: [SkillCall]
+    to_types: [Receipt]
+  references:
+    from_types: [Receipt, Summary]
+    to_types: [Artifact]
+  summarizes:
+    from_types: [Summary]
+    to_types: [Receipt]
+  has_skill:
+    from_types: [Session]
+    to_types: [Skill]
+  plans_for:
+    from_types: [Plan]
+    to_types: [Task, Objective]
+  verified_by:
+    from_types: [TestResult]
+    to_types: [Receipt]
+  evidence_for:
+    from_types: [TestResult]
+    to_types: [Artifact]
+  caused_by:
+    from_types: [Receipt]
+    to_types: [Error]
+  doctor_probe:
+    from_types: [DoctorProbe]
+    to_types: [DoctorProbe]
+
+constraints:
+  - id: skill_execution_parent_run
+    description: Every SkillExecution must have exactly one RUN_HAS_STEP inbound edge from a Run.
+  - id: receipt_required_fields
+    description: Every Receipt must include status, ts_utc, and checksum.
+  - id: verified_claim_support
+    description: A verified Claim must have CLAIM_SUPPORTED_BY to a Receipt with status=success.

@@ -1,0 +1,5 @@
+STDOUT
+{"artifact_id": "node-50c65e2c1bdd", "bytes": 41, "etag": "", "s3_uri": "logs/artifacts/run-834fc8458f/5be19e10-log.txt", "sha256": "e96706f39bff5bf5a914772123257b2a53f76b14ad3abd16d081df5521de3b71"}
+
+LOGS
+[2026-02-24T01:46:19.985120+00:00] Stored artifact node-50c65e2c1bdd at logs/artifacts/run-834fc8458f/5be19e10-log.txt.

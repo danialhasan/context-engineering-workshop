@@ -1,0 +1,25 @@
+name: upload_artifact
+description: Upload a log or payload artifact and return its S3 URI plus checksum.
+allowed_phases: [ACT, VERIFY]
+produces: [Artifact, Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, name]
+  properties:
+    run_id: {type: string}
+    name: {type: string}
+    local_path: {type: string}
+    content: {type: string}
+outputs_schema:
+  type: object
+  required: [s3_uri, sha256, bytes, artifact_id, receipt_id]
+  properties:
+    s3_uri: {type: string}
+    sha256: {type: string}
+    bytes: {type: integer}
+    artifact_id: {type: string}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  name: run.log
+  content: hello world

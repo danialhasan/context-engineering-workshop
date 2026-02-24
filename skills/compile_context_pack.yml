@@ -1,0 +1,24 @@
+name: compile_context_pack
+description: Traverse graph evidence and compile a ranked budgeted context pack.
+allowed_phases: [PLAN, VERIFY]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, max_items, byte_budget]
+  properties:
+    run_id: {type: string}
+    max_items: {type: integer}
+    byte_budget: {type: integer}
+outputs_schema:
+  type: object
+  required: [pack_id, items, used_bytes, dropped_count, receipt_id]
+  properties:
+    pack_id: {type: string}
+    items: {type: array}
+    used_bytes: {type: integer}
+    dropped_count: {type: integer}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  max_items: 10
+  byte_budget: 4096
