@@ -1,5 +1,0 @@
-STDOUT
-{"node_pk": "step-75decc", "node_sk": "SkillExecution", "version": 1}
-
-LOGS
-[2026-02-24T01:46:36.723770+00:00] Upserted node step-75decc (SkillExecution).

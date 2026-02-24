@@ -1,5 +1,0 @@
-STDOUT
-{"artifact_id": "node-cacea6b6448e", "bytes": 43, "s3_uri": "logs/artifacts/session-skill-003/4203d8f6-manual-artifact.txt", "sha256": "1be25a584c27e926af919cbca147d73168d26597135cc2d384eddd92a98ac1ca"}
-
-LOGS
-[2026-02-24T01:53:48.932027+00:00] Uploaded artifact node-cacea6b6448e to logs/artifacts/session-skill-003/4203d8f6-manual-artifact.txt.

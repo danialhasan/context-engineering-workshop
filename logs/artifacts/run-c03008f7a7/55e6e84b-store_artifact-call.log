@@ -1,5 +1,0 @@
-STDOUT
-{"artifact_id": "node-d1acaf0e4090", "bytes": 41, "etag": "", "s3_uri": "logs/artifacts/run-c03008f7a7/c734e4dd-log.txt", "sha256": "e96706f39bff5bf5a914772123257b2a53f76b14ad3abd16d081df5521de3b71"}
-
-LOGS
-[2026-02-24T01:45:47.146042+00:00] Stored artifact node-d1acaf0e4090 at logs/artifacts/run-c03008f7a7/c734e4dd-log.txt.

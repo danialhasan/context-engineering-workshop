@@ -1,5 +1,0 @@
-STDOUT
-{"provider": "fallback", "summary": "Smoke run executed PLAN -> ACT -> VERIFY."}
-
-LOGS
-[2026-02-24T01:53:13.511485+00:00] Used fallback summarizer.
