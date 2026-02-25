@@ -19,6 +19,10 @@ const Presentation = ({ slides }) => {
     const firstWorkshopIndex = slides.findIndex((s) => (s?.name || '').includes('Workshop'));
     const firstSwarmIndex = slides.findIndex((s) => (s?.name || '').includes('Swarm'));
 
+    if (slideName.includes('Cover')) return 'Cover';
+    if (slideName.includes('SpeakerIntro') || slideName.includes('Sponsors')) return 'Opening';
+    if (slideName.includes('HowLectureBuilds')) return 'Table Of Contents';
+    if (slideName.includes('DeckRequest') || slideName.includes('Workshop') || slideName.includes('WrapUp')) return 'Workshop';
     if (
       firstSwarmIndex !== -1 &&
       index >= firstSwarmIndex &&
@@ -26,15 +30,27 @@ const Presentation = ({ slides }) => {
     ) {
       return 'Swarm Mechanics';
     }
-
     if (slideName.includes('Swarm')) return 'Swarm Mechanics';
-    if (slideName.includes('Workshop')) return 'Workshop';
-    if (index === 0) return 'Cover';
-    if (index === 1) return 'Table Of Contents';
-    if (index >= 2 && index <= 13) return 'Fundamentals';
-    if (index >= 14 && index <= 26) return 'Context Engineering Mechanics';
-    if (firstSwarmIndex !== -1 && index >= 27 && index < firstSwarmIndex) return 'Industry Research';
-    if (index >= 27 && firstSwarmIndex === -1) return 'Industry Research';
+    if (
+      slideName.includes('Research') ||
+      slideName.includes('Anthropic') ||
+      slideName.includes('OpenAI') ||
+      slideName.includes('Manus') ||
+      slideName.includes('CrossLab')
+    ) {
+      return 'Industry Research';
+    }
+    if (
+      slideName.includes('Primitive') ||
+      slideName.includes('Ontology') ||
+      slideName.includes('ContextEngineering') ||
+      slideName.includes('ContextAssembly')
+    ) {
+      return 'Context Engineering Mechanics';
+    }
+    if (slideName.includes('Agent') || slideName.includes('Harness') || slideName.includes('Failure') || slideName.includes('FundamentalProblem')) {
+      return 'Fundamentals';
+    }
     return 'Section';
   };
 
@@ -71,21 +87,21 @@ const Presentation = ({ slides }) => {
         }`}
         aria-hidden={!controlsVisible}
       >
-        <div className="absolute top-[3%] left-[3%] text-[clamp(0.7rem,1vw,1rem)] text-slate-600 tracking-[0.18em] font-bold uppercase pointer-events-auto bg-white/60 backdrop-blur-md px-[1vw] py-[0.5vw] rounded-full border border-white/60 shadow-sm">
+        <div className="absolute top-[2%] left-[2.2%] text-[clamp(0.62rem,0.9vw,0.9rem)] text-slate-600 tracking-[0.18em] font-bold uppercase pointer-events-auto bg-white/60 backdrop-blur-md px-[0.85vw] py-[0.42vw] rounded-full border border-white/60 shadow-sm">
           {currentSectionLabel}
         </div>
 
-        <div className="absolute top-[3%] right-[3%] text-[clamp(0.7rem,1vw,1rem)] text-slate-500 tracking-[0.2em] font-medium uppercase pointer-events-auto bg-white/60 backdrop-blur-md px-[1vw] py-[0.5vw] rounded-full border border-white/60 shadow-sm">
+        <div className="absolute top-[2%] right-[2.2%] text-[clamp(0.62rem,0.9vw,0.9rem)] text-slate-500 tracking-[0.18em] font-medium uppercase pointer-events-auto bg-white/60 backdrop-blur-md px-[0.85vw] py-[0.42vw] rounded-full border border-white/60 shadow-sm">
           [ ← / → / Space ] Nav &nbsp; [ F ] Fullscreen
         </div>
 
-        <div className="absolute bottom-[3%] left-[3%] right-[3%] flex items-center justify-between pointer-events-auto bg-white/60 backdrop-blur-md px-[2%] py-[1.5%] rounded-[1vw] border border-white/60 shadow-lg">
-          <div className="w-[15%] text-[clamp(0.9rem,1.2vw,1.25rem)] font-bold text-slate-800" aria-live="polite">
+        <div className="absolute bottom-[1.2%] left-[2.2%] right-[2.2%] flex items-center justify-between pointer-events-auto bg-white/55 backdrop-blur-md px-[1.35%] py-[0.8%] rounded-[0.9vw] border border-white/60 shadow-lg">
+          <div className="w-[14%] text-[clamp(0.82rem,1.05vw,1.1rem)] font-bold text-slate-800" aria-live="polite">
             {String(currentIndex + 1).padStart(2, '0')}
             <span className="text-slate-500 ml-2">/ {String(slides.length).padStart(2, '0')}</span>
           </div>
 
-          <div className="flex-1 flex justify-center gap-[1%] px-[5%]" role="tablist">
+          <div className="flex-1 flex justify-center gap-[0.8%] px-[4%]" role="tablist">
             {slides.map((_, idx) => (
               <button
                 key={idx}
@@ -93,21 +109,21 @@ const Presentation = ({ slides }) => {
                 aria-selected={idx === currentIndex}
                 aria-label={`Go to slide ${idx + 1}`}
                 onClick={() => setCurrentIndex(idx)}
-                className={`h-[4px] rounded-full transition-all duration-500 cursor-pointer hover:bg-slate-500 ${
-                  idx === currentIndex ? 'w-[4%] bg-slate-800' : 'w-[1.5%] bg-slate-300'
+                className={`h-[3px] rounded-full transition-all duration-500 cursor-pointer hover:bg-slate-500 ${
+                  idx === currentIndex ? 'w-[3.6%] bg-slate-800' : 'w-[1.35%] bg-slate-300'
                 }`}
               />
             ))}
           </div>
 
-          <div className="w-[15%] flex items-center justify-end gap-[15%]">
+          <div className="w-[14%] flex items-center justify-end gap-[12%]">
             <button
               onClick={prevSlide}
               aria-label="Previous Slide"
               className="text-slate-500 hover:text-slate-900 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               disabled={currentIndex === 0}
             >
-              <ChevronLeft className="w-[clamp(1.5rem,2vw,2rem)] h-[clamp(1.5rem,2vw,2rem)]" />
+              <ChevronLeft className="w-[clamp(1.25rem,1.7vw,1.75rem)] h-[clamp(1.25rem,1.7vw,1.75rem)]" />
             </button>
             <button
               onClick={nextSlide}
@@ -115,18 +131,18 @@ const Presentation = ({ slides }) => {
               className="text-slate-500 hover:text-slate-900 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               disabled={currentIndex === slides.length - 1}
             >
-              <ChevronRight className="w-[clamp(1.5rem,2vw,2rem)] h-[clamp(1.5rem,2vw,2rem)]" />
+              <ChevronRight className="w-[clamp(1.25rem,1.7vw,1.75rem)] h-[clamp(1.25rem,1.7vw,1.75rem)]" />
             </button>
-            <div className="w-[1px] h-[clamp(1.5rem,2vw,2rem)] bg-slate-300" aria-hidden="true" />
+            <div className="w-[1px] h-[clamp(1.2rem,1.55vw,1.55rem)] bg-slate-300" aria-hidden="true" />
             <button
               onClick={toggleFullscreen}
               aria-label={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
               className="text-slate-500 hover:text-slate-900 transition-colors"
             >
               {isFullscreen ? (
-                <Minimize className="w-[clamp(1.2rem,1.5vw,1.5rem)] h-[clamp(1.2rem,1.5vw,1.5rem)]" />
+                <Minimize className="w-[clamp(1.05rem,1.25vw,1.3rem)] h-[clamp(1.05rem,1.25vw,1.3rem)]" />
               ) : (
-                <Maximize className="w-[clamp(1.2rem,1.5vw,1.5rem)] h-[clamp(1.2rem,1.5vw,1.5rem)]" />
+                <Maximize className="w-[clamp(1.05rem,1.25vw,1.3rem)] h-[clamp(1.05rem,1.25vw,1.3rem)]" />
               )}
             </button>
           </div>

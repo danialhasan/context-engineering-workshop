@@ -1,4 +1,6 @@
 export { default as Slide01Cover } from './Slide01Cover';
+export { default as Slide01SpeakerIntro } from './Slide01SpeakerIntro';
+export { default as Slide01SponsorsThankYou } from './Slide01SponsorsThankYou';
 export { default as Slide02HowLectureBuilds } from './Slide02HowLectureBuilds';
 export { default as Slide02WhatIsAgent } from './Slide02WhatIsAgent';
 export { default as Slide03StatefulStateless } from './Slide03StatefulStateless';
@@ -67,6 +69,8 @@ export { default as Slide56VerificationGates } from './Slide56VerificationGates'
 export { default as Slide57ConflictFreshnessPolicy } from './Slide57ConflictFreshnessPolicy';
 export { default as Slide58SwarmRuntimeLoop } from './Slide58SwarmRuntimeLoop';
 export { default as Slide59WorkshopMapping } from './Slide59WorkshopMapping';
+export { default as Slide36DeckRequest } from './Slide36DeckRequest';
 export { default as Slide37WorkshopBuild } from './Slide37WorkshopBuild';
 export { default as Slide38WorkshopRun } from './Slide38WorkshopRun';
 export { default as Slide39WorkshopAccess } from './Slide39WorkshopAccess';
+export { default as Slide40WrapUpCta } from './Slide40WrapUpCta';

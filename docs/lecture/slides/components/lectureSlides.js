@@ -1,5 +1,7 @@
 import {
   Slide01Cover,
+  Slide01SpeakerIntro,
+  Slide01SponsorsThankYou,
   Slide02HowLectureBuilds,
   Slide02WhatIsAgent,
   Slide03StatefulStateless,
@@ -67,13 +69,17 @@ import {
   Slide57ConflictFreshnessPolicy,
   Slide58SwarmRuntimeLoop,
   Slide59WorkshopMapping,
+  Slide36DeckRequest,
   Slide37WorkshopBuild,
   Slide38WorkshopRun,
-  Slide39WorkshopAccess
+  Slide39WorkshopAccess,
+  Slide40WrapUpCta
 } from './slides';
 
 const lectureSlides = [
   Slide01Cover,
+  Slide01SpeakerIntro,
+  Slide01SponsorsThankYou,
   Slide02HowLectureBuilds,
   Slide02WhatIsAgent,
   Slide03StatefulStateless,
@@ -141,9 +147,11 @@ const lectureSlides = [
   Slide57ConflictFreshnessPolicy,
   Slide58SwarmRuntimeLoop,
   Slide59WorkshopMapping,
+  Slide36DeckRequest,
   Slide37WorkshopBuild,
   Slide38WorkshopRun,
-  Slide39WorkshopAccess
+  Slide39WorkshopAccess,
+  Slide40WrapUpCta
 ];
 
 export default lectureSlides;
