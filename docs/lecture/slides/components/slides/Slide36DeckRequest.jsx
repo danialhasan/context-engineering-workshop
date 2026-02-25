@@ -21,9 +21,9 @@ const Slide36DeckRequest = () => (
       <div className="col-span-3 rounded-[1.05vw] border border-slate-200 bg-white/85 shadow-sm overflow-hidden min-h-0 relative">
         <img src={danialHeadshot} alt="Danial Hasan" className="absolute inset-0 w-full h-full object-cover" />
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950/60 via-slate-950/15 to-transparent" />
-        <div className="absolute inset-x-[4.5%] bottom-[4.5%] bg-white/87 backdrop-blur rounded-[0.85vw] border border-white/70 shadow-lg p-[3.4%]">
-          <p className="text-[clamp(1rem,1.15vw,1.3rem)] font-bold text-slate-900 mb-[0.5%]">Danial Hasan</p>
-          <p className="text-[clamp(0.82rem,0.9vw,0.96rem)] text-slate-700 font-medium leading-snug">
+        <div className="absolute inset-x-[4.5%] bottom-[4.5%] bg-slate-950/45 backdrop-blur rounded-[0.85vw] border border-white/30 shadow-lg p-[3.4%]">
+          <p className="text-[clamp(1rem,1.15vw,1.3rem)] font-bold text-white mb-[0.5%]">Danial Hasan</p>
+          <p className="text-[clamp(0.82rem,0.9vw,0.96rem)] text-white/85 font-medium leading-snug">
             CTO of Squad • Applied AI Consultant
           </p>
         </div>
@@ -34,7 +34,7 @@ const Slide36DeckRequest = () => (
           <img
             src={danialSocialsQr}
             alt="Danial Hasan socials QR code"
-            className="w-[clamp(15rem,22vw,24rem)] h-[clamp(15rem,22vw,24rem)] object-contain rounded-[0.6vw]"
+            className="w-[clamp(12.8rem,17vw,18.2rem)] h-[clamp(12.8rem,17vw,18.2rem)] object-contain rounded-[0.6vw]"
           />
         </div>
 
