@@ -12,7 +12,7 @@ By the end of the 90-minute workshop, each attendee can:
    - graph nodes/edges in DynamoDB (`GraphNodes`, `GraphEdges`)
    - large artifacts in S3 (`CEW_ARTIFACT_BUCKET`)
 6. Use `aws_tool` as the allowlisted execution wrapper (`list-skills` and `run`).
-7. Show Bedrock-optional behavior (fallback path still works when `BEDROCK_ENABLED=0`).
+7. Run Bedrock-backed inference successfully for workshop agent turns.
 
 Lecture outcome (30-minute block):
 
@@ -26,8 +26,8 @@ Lecture outcome (30-minute block):
 ## 2) Constraints (MVP Scope)
 
 - Time-boxed for a single 90-minute hands-on session.
-- AWS primitives only: DynamoDB, S3, IAM/STS, optional Bedrock.
-- Bedrock must remain optional for workshop pass criteria.
+- AWS primitives only: DynamoDB, S3, IAM/STS, Bedrock runtime.
+- Bedrock inference is required for workshop pass criteria.
 - No additional AWS services are introduced.
 - Agent-facing execution path stays behind `aws_tool` with schema/phase validation.
 
@@ -41,7 +41,8 @@ export AWS_DEFAULT_REGION=$AWS_REGION
 export CEW_GRAPH_NODES_TABLE=GraphNodes
 export CEW_GRAPH_EDGES_TABLE=GraphEdges
 export CEW_ARTIFACT_BUCKET=<workshop-bucket>
-export BEDROCK_ENABLED=0
+export BEDROCK_ENABLED=1
+export BEDROCK_MODEL_ID=us.anthropic.claude-opus-4-6-v1
 ```
 
 Notes:
@@ -66,7 +67,7 @@ make doctor
 Current behavior:
 - `make install` bootstraps `.venv` (if missing) and installs dependencies in that environment.
 - `make provision` creates GraphNodes/GraphEdges and a default artifact bucket when missing, and prints recommended exports.
-- `make doctor` checks Python 3.10+, AWS CLI, region, STS identity, DynamoDB table existence + read/write round-trip, S3 write, and optional Bedrock listing.
+- `make doctor` checks Python 3.10+, AWS CLI, region, STS identity, DynamoDB table existence + read/write round-trip, S3 write, and Bedrock runtime access.
 - `make smoke` is real-AWS only and fails loudly with `stage`, `error`, and `session_id`.
 - `make compile` defaults to real AWS (`CEW_MOCK_AWS=0`) unless explicitly overridden; this is a control/baseline tool, not the core workshop path.
 
@@ -118,6 +119,9 @@ Current skill names:
 - `complete_task`
 - `verify_task`
 - `list_tasks`
+- `create_channel`
+- `post_channel_message`
+- `list_channel_messages`
 - `search_nodes`
 - `get_node`
 - `neighbors`
@@ -226,7 +230,7 @@ By Wednesday, February 25, 2026, freeze is achieved only if:
 1. Golden path (`install -> provision -> doctor`) works in a fresh workshop account.
 2. Single-agent lifecycle works end-to-end (tasks -> evidence -> verify).
 3. Docs use current env var names and current commands only.
-4. Bedrock remains optional and does not block baseline success.
+4. Bedrock runtime is available and inference succeeds with the configured model.
 5. Escalation guidance for IAM/region/resource issues is ready for on-site SA support.
 
 ## 9) Definition of Done

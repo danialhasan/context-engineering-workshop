@@ -519,22 +519,139 @@ def scenario_e_stale_context(run_id: str) -> dict[str, Any]:
     }
 
 
+def scenario_f_channel_handoff(run_id: str) -> dict[str, Any]:
+    task = _run_skill(
+        session=run_id,
+        phase="PLAN",
+        skill="create_task",
+        payload={
+            "run_id": run_id,
+            "title": "Scenario F: channel handoff communication",
+            "description": "Planner/worker/verifier exchange typed updates via channel tools",
+        },
+    )
+    task_id = str(task["task_id"])
+
+    channel = _run_skill(
+        session=run_id,
+        phase="PLAN",
+        skill="create_channel",
+        payload={
+            "run_id": run_id,
+            "channel_name": f"task-{task_id}-handoff",
+            "topic": "Swarm coordination updates for task lifecycle",
+            "participants": ["planner-f", "worker-f", "verifier-f"],
+        },
+    )
+    channel_id = str(channel["channel_id"])
+
+    _run_skill(
+        session=run_id,
+        phase="ACT",
+        skill="post_channel_message",
+        payload={
+            "run_id": run_id,
+            "channel_id": channel_id,
+            "agent_id": "planner-f",
+            "task_id": task_id,
+            "message": "Task created and assigned to worker-f.",
+            "level": "info",
+        },
+    )
+
+    _run_skill(
+        session=run_id,
+        phase="ACT",
+        skill="claim_task",
+        payload={
+            "run_id": run_id,
+            "task_id": task_id,
+            "agent_id": "worker-f",
+            "lease_seconds": 900,
+        },
+    )
+
+    _run_skill(
+        session=run_id,
+        phase="ACT",
+        skill="post_channel_message",
+        payload={
+            "run_id": run_id,
+            "channel_id": channel_id,
+            "agent_id": "worker-f",
+            "task_id": task_id,
+            "message": "Evidence upload complete. Ready for verification.",
+            "level": "info",
+        },
+    )
+
+    _run_skill(
+        session=run_id,
+        phase="ACT",
+        skill="post_channel_message",
+        payload={
+            "run_id": run_id,
+            "channel_id": channel_id,
+            "agent_id": "verifier-f",
+            "task_id": task_id,
+            "message": "Verification queued. Waiting for receipt + artifact linkage.",
+            "level": "warning",
+        },
+    )
+
+    listed = _run_skill(
+        session=run_id,
+        phase="VERIFY",
+        skill="list_channel_messages",
+        payload={
+            "run_id": run_id,
+            "channel_id": channel_id,
+            "limit": 20,
+        },
+    )
+    messages = listed.get("messages", [])
+    authors = {str(item.get("agent_id") or "") for item in messages}
+
+    return {
+        "scenario": "F",
+        "run_id": run_id,
+        "ok": len(messages) >= 3 and {"planner-f", "worker-f", "verifier-f"}.issubset(authors),
+        "steps": {
+            "create_task": task,
+            "create_channel": channel,
+            "list_channel_messages": listed,
+        },
+        "expected_observations": [
+            "Dedicated channel shows planner/worker/verifier message flow",
+            "Messages are linked to task context for handoff traceability",
+            "Swarm communication panel shows channel participant and message counts",
+        ],
+        "summary": {
+            "task_id": task_id,
+            "channel_id": channel_id,
+            "message_count": len(messages),
+            "agents_seen": sorted([agent for agent in authors if agent]),
+        },
+    }
+
+
 SCENARIOS: dict[str, ScenarioFunc] = {
     "A": scenario_a_happy_path,
     "B": scenario_b_no_evidence_attempt,
     "C": scenario_c_parallel_conflict,
     "D": scenario_d_timeout_reassign,
     "E": scenario_e_stale_context,
+    "F": scenario_f_channel_handoff,
 }
 
 
 def run_scenarios(*, session_base: str, scenario: str) -> dict[str, Any]:
     scenario_key = scenario.upper()
     if scenario_key == "ALL":
-        ordered = ["A", "B", "C", "D", "E"]
+        ordered = ["A", "B", "C", "D", "E", "F"]
     else:
         if scenario_key not in SCENARIOS:
-            raise ValueError(f"Unsupported scenario '{scenario}'. Use A, B, C, D, E, or ALL.")
+            raise ValueError(f"Unsupported scenario '{scenario}'. Use A, B, C, D, E, F, or ALL.")
         ordered = [scenario_key]
 
     runs: list[dict[str, Any]] = []
@@ -557,12 +674,12 @@ def run_scenarios(*, session_base: str, scenario: str) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run workshop scenario suite (A-E).")
+    parser = argparse.ArgumentParser(description="Run workshop scenario suite (A-F).")
     parser.add_argument("--session-base", required=True, help="Base session id prefix for scenario runs.")
     parser.add_argument(
         "--scenario",
         default="ALL",
-        help="Scenario to run: A, B, C, D, E, or ALL (default).",
+        help="Scenario to run: A, B, C, D, E, F, or ALL (default).",
     )
     args = parser.parse_args()
 

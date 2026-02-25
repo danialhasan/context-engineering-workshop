@@ -205,7 +205,7 @@ These are the concrete code surfaces to change after doc alignment.
 - support retrieval filters for freshness/verification priorities
 
 8. `src/summarizer/*` (optional):
-- keep Bedrock optional, fallback deterministic
+- use Bedrock as workshop inference engine while retaining deterministic fallback for control comparisons
 - ensure absence of Bedrock never blocks core loop
 
 ## Risks and mitigations

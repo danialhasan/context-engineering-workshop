@@ -1,4 +1,4 @@
-# Workshop Scenario Runbook (A-E)
+# Workshop Scenario Runbook (A-F)
 
 Status: Draft (implementation-aligned)
 Owner: Workshop implementation track
@@ -31,6 +31,7 @@ Outputs:
   - `${SESSION_BASE}-c`
   - `${SESSION_BASE}-d`
   - `${SESSION_BASE}-e`
+  - `${SESSION_BASE}-f`
 
 ## Run One Scenario
 
@@ -61,6 +62,11 @@ make workshop-scenarios SESSION_BASE="$SESSION_BASE" SCENARIO=C
 - Stale decision and fresh superseding decision both exist.
 - Retrieval should prioritize fresh node.
 
+6. Scenario F (Channel handoff)
+- Dedicated communication channel is created for the task.
+- Planner/worker/verifier messages appear in channel history.
+- Swarm communication panel shows participants + message count.
+
 ## GUI Inspection Path
 
 1. Start GUI:
@@ -86,4 +92,3 @@ make gui
 
 3. S3 verification fails unexpectedly in Scenario A:
 - Confirm artifact bucket write/read permissions in `make doctor`.
-

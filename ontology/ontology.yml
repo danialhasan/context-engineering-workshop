@@ -15,6 +15,18 @@ node_types:
     required_fields: [skill, status]
   Claim:
     required_fields: [state]
+  Agent:
+    required_fields: [agent_id]
+  Role:
+    required_fields: [name]
+  Channel:
+    required_fields: [channel_name]
+  Message:
+    required_fields: [channel_id, agent_id, message, ts_utc]
+  Lease:
+    required_fields: [task_id, agent_id, expires_at, state]
+  Dependency:
+    required_fields: [label]
   Task:
     required_fields: [title]
   Objective:
@@ -81,6 +93,27 @@ edge_types:
   CLAIM_APPLIES_TO:
     from_types: [Claim]
     to_types: [Task]
+  PARTICIPATES_IN:
+    from_types: [Agent]
+    to_types: [Channel]
+  CHANNEL_HAS_MESSAGE:
+    from_types: [Channel]
+    to_types: [Message]
+  MESSAGE_AUTHORED_BY:
+    from_types: [Message]
+    to_types: [Agent]
+  MESSAGE_RELATES_TO_TASK:
+    from_types: [Message]
+    to_types: [Task]
+  LEASE_FOR_TASK:
+    from_types: [Lease]
+    to_types: [Task]
+  LEASE_HELD_BY:
+    from_types: [Lease]
+    to_types: [Agent]
+  DEPENDS_ON:
+    from_types: [Task]
+    to_types: [Dependency]
   TASK_EVIDENCED_BY:
     from_types: [Task]
     to_types: [Receipt]

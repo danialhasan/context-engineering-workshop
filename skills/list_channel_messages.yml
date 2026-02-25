@@ -1,0 +1,37 @@
+name: list_channel_messages
+description: List recent channel messages for swarm communication inspection.
+allowed_phases: [PLAN, ACT, VERIFY]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, channel_id]
+  properties:
+    run_id: {type: string}
+    channel_id: {type: string}
+    limit:
+      type: integer
+      minimum: 1
+outputs_schema:
+  type: object
+  required: [channel_id, messages, receipt_id]
+  properties:
+    channel_id: {type: string}
+    channel_name: {type: string}
+    messages:
+      type: array
+      items:
+        type: object
+        required: [message_id, channel_id, agent_id, message, ts_utc]
+        properties:
+          message_id: {type: string}
+          channel_id: {type: string}
+          agent_id: {type: string}
+          task_id: {type: string}
+          message: {type: string}
+          level: {type: string}
+          ts_utc: {type: string}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  channel_id: channel-task-alpha
+  limit: 20

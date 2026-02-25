@@ -45,7 +45,8 @@ aws sts get-caller-identity
 export CEW_GRAPH_NODES_TABLE=GraphNodes
 export CEW_GRAPH_EDGES_TABLE=GraphEdges
 export CEW_ARTIFACT_BUCKET=<workshop-bucket-name>
-export BEDROCK_ENABLED=0
+export BEDROCK_ENABLED=1
+export BEDROCK_MODEL_ID=us.anthropic.claude-opus-4-6-v1
 unset CEW_MOCK_AWS
 ```
 
@@ -129,7 +130,7 @@ make compile STRATEGY=recite SESSION="$SESSION" TASK="Summarize latest verified 
   - `export AWS_DEFAULT_REGION=$AWS_REGION`
 
 3. `Bedrock access check failed`
-- Fix: set `export BEDROCK_ENABLED=0` for workshop baseline, or ask SA to enable Bedrock model access + IAM permissions.
+- Fix: refresh workshop credentials, confirm Bedrock model access in the workshop account, and retry with `BEDROCK_ENABLED=1`.
 
 4. Missing `GraphNodes` or `GraphEdges`
 - Fix: confirm exact table names and set:

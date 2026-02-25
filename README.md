@@ -117,7 +117,7 @@ Freshness requirements:
 
 - DynamoDB (`GraphNodes`, `GraphEdges`) is structured state for ontology and coordination.
 - S3 is artifact and evidence storage.
-- Bedrock is optional model assistance (for example compaction/summarization helpers).
+- Bedrock is the primary inference engine for workshop agent turns and summaries.
 - The workshop is not AWS for AWS's sake; AWS is the runtime substrate for the context-engineering harness.
 
 ### What attendees leave with
@@ -163,7 +163,8 @@ export AWS_DEFAULT_REGION=$AWS_REGION
 export CEW_GRAPH_NODES_TABLE=GraphNodes
 export CEW_GRAPH_EDGES_TABLE=GraphEdges
 export CEW_ARTIFACT_BUCKET=<bucket-name>
-export BEDROCK_ENABLED=0
+export BEDROCK_ENABLED=1
+export BEDROCK_MODEL_ID=us.anthropic.claude-opus-4-6-v1
 ```
 
 Mode switch:
@@ -184,7 +185,7 @@ What each does:
 
 - `make install`: creates `.venv` (if missing) and installs dependencies.
 - `make provision`: creates `GraphNodes` and `GraphEdges` (if missing) and ensures artifact bucket exists.
-- `make doctor`: verifies Python, AWS CLI, region, STS identity, DynamoDB read/write round-trip, S3 write, optional Bedrock access.
+- `make doctor`: verifies Python, AWS CLI, region, STS identity, DynamoDB read/write round-trip, S3 write, and Bedrock access.
 - `./aws_tool list-skills`: prints allowlisted tools and phases.
 
 ### Single-agent lifecycle (minimal run)

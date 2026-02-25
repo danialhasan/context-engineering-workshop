@@ -1,0 +1,29 @@
+name: create_channel
+description: Create or update a swarm communication channel with optional participants.
+allowed_phases: [PLAN, ACT]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, channel_name]
+  properties:
+    run_id: {type: string}
+    channel_name: {type: string}
+    topic: {type: string}
+    participants:
+      type: array
+      items: {type: string}
+    channel_id: {type: string}
+outputs_schema:
+  type: object
+  required: [channel_id, channel_name, participant_count, receipt_id]
+  properties:
+    channel_id: {type: string}
+    channel_name: {type: string}
+    topic: {type: string}
+    participant_count: {type: integer}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  channel_name: swarm-task-alpha
+  topic: Task alpha handoff channel
+  participants: [planner-1, worker-a, verifier-1]

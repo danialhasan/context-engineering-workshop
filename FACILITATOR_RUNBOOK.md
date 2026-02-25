@@ -31,7 +31,8 @@ aws sts get-caller-identity
 - Attendees run:
 
 ```bash
-export BEDROCK_ENABLED=0
+export BEDROCK_ENABLED=1
+export BEDROCK_MODEL_ID=us.anthropic.claude-opus-4-6-v1
 unset CEW_MOCK_AWS
 make install
 make provision

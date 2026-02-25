@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -287,6 +288,48 @@ def _execute_skill_impl(
             if data.get(key):
                 return str(data.get(key))
         return json.dumps(data, sort_keys=True, default=str)[:220]
+
+    def normalize_string_list(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        out = []
+        for item in value:
+            text = str(item).strip()
+            if text:
+                out.append(text)
+        return sorted(set(out))
+
+    def ensure_edge(from_id: str, edge_type: str, to_id: str) -> None:
+        existing = graph.neighbors(from_id)
+        for edge in existing:
+            if (
+                str(edge.get("edge_type") or "") == edge_type
+                and str(edge.get("to_id") or "") == to_id
+            ):
+                return
+        graph.put_edge(
+            from_id=from_id,
+            edge_type=edge_type,
+            to_id=to_id,
+            session_id=run_id,
+        )
+
+    def ensure_agent_node(agent_id: str) -> str:
+        agent_node_id = f"agent-{run_id}-{agent_id}"
+        existing_agent = graph.get_node(agent_node_id)
+        existing_data = node_payload(existing_agent) if isinstance(existing_agent, dict) else {}
+        graph.put_node(
+            type="Agent",
+            data={
+                "agent_id": agent_id,
+                "last_seen_at": _utcnow(),
+                "role": existing_data.get("role"),
+            },
+            session_id=run_id,
+            validated=True,
+            node_id=agent_node_id,
+        )
+        return agent_node_id
 
     if skill == "assemble_context_view_agent":
         requested_phase = str(payload.get("phase") or "")
@@ -904,6 +947,164 @@ def _execute_skill_impl(
         out.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
         return {"tasks": out[:limit]}
 
+    if skill == "create_channel":
+        channel_name = str(payload["channel_name"]).strip()
+        if not channel_name:
+            raise SkillValidationError("create_channel.channel_name must be a non-empty string.")
+
+        topic = str(payload.get("topic") or "").strip()
+        participants = normalize_string_list(payload.get("participants"))
+        channel_id = str(payload.get("channel_id") or "").strip() or f"channel-{uuid.uuid4().hex[:12]}"
+
+        existing = graph.get_node(channel_id)
+        if existing and str(existing.get("type")) != "Channel":
+            raise SkillValidationError(f"Node '{channel_id}' exists and is not a Channel.")
+
+        existing_data = node_payload(existing) if isinstance(existing, dict) else {}
+        merged_participants = sorted(set(normalize_string_list(existing_data.get("participants")) + participants))
+        channel_data = {
+            "channel_name": channel_name,
+            "topic": topic or str(existing_data.get("topic") or ""),
+            "participants": merged_participants,
+            "created_at": str(existing_data.get("created_at") or _utcnow()),
+            "updated_at": _utcnow(),
+        }
+
+        graph.put_node(
+            type="Channel",
+            data=channel_data,
+            session_id=run_id,
+            validated=True,
+            node_id=channel_id,
+        )
+
+        for agent_id in merged_participants:
+            agent_node_id = ensure_agent_node(agent_id)
+            ensure_edge(agent_node_id, "PARTICIPATES_IN", channel_id)
+
+        log(f"Created/updated channel {channel_id} with {len(merged_participants)} participants.")
+        return {
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "topic": channel_data["topic"],
+            "participant_count": len(merged_participants),
+        }
+
+    if skill == "post_channel_message":
+        channel_id = str(payload["channel_id"]).strip()
+        channel_node = graph.get_node(channel_id)
+        if not channel_node or str(channel_node.get("type")) != "Channel":
+            raise SkillValidationError(f"Channel not found or wrong type: {channel_id}")
+
+        agent_id = str(payload["agent_id"]).strip()
+        if not agent_id:
+            raise SkillValidationError("post_channel_message.agent_id must be a non-empty string.")
+
+        message_text = str(payload["message"]).strip()
+        if not message_text:
+            raise SkillValidationError("post_channel_message.message must be a non-empty string.")
+
+        task_id = str(payload.get("task_id") or "").strip()
+        if task_id:
+            task_node = graph.get_node(task_id)
+            if not task_node or str(task_node.get("type")) != "Task":
+                raise SkillValidationError(f"Task not found or wrong type: {task_id}")
+
+        now_utc = _utcnow()
+        message_id = str(payload.get("message_id") or "").strip() or f"message-{uuid.uuid4().hex[:12]}"
+        level = str(payload.get("level") or "info").strip()
+
+        graph.put_node(
+            type="Message",
+            data={
+                "channel_id": channel_id,
+                "agent_id": agent_id,
+                "task_id": task_id or None,
+                "message": message_text,
+                "level": level,
+                "ts_utc": now_utc,
+            },
+            session_id=run_id,
+            validated=True,
+            node_id=message_id,
+        )
+
+        agent_node_id = ensure_agent_node(agent_id)
+        ensure_edge(agent_node_id, "PARTICIPATES_IN", channel_id)
+        ensure_edge(channel_id, "CHANNEL_HAS_MESSAGE", message_id)
+        ensure_edge(message_id, "MESSAGE_AUTHORED_BY", agent_node_id)
+        if task_id:
+            ensure_edge(message_id, "MESSAGE_RELATES_TO_TASK", task_id)
+
+        channel_data = node_payload(channel_node)
+        participants = normalize_string_list(channel_data.get("participants"))
+        if agent_id not in participants:
+            participants.append(agent_id)
+            participants = sorted(set(participants))
+        message_count = int(channel_data.get("message_count") or 0) + 1
+        graph.put_node(
+            type="Channel",
+            data={
+                **channel_data,
+                "participants": participants,
+                "last_message_at": now_utc,
+                "last_message_id": message_id,
+                "last_message_agent": agent_id,
+                "message_count": message_count,
+                "updated_at": now_utc,
+            },
+            session_id=run_id,
+            validated=True,
+            node_id=channel_id,
+        )
+
+        log(f"Posted message {message_id} in channel {channel_id}.")
+        return {
+            "message_id": message_id,
+            "channel_id": channel_id,
+            "agent_id": agent_id,
+            "task_id": task_id or "",
+            "ts_utc": now_utc,
+        }
+
+    if skill == "list_channel_messages":
+        channel_id = str(payload["channel_id"]).strip()
+        limit = int(payload.get("limit") or 50)
+        if limit <= 0:
+            limit = 50
+
+        channel_node = graph.get_node(channel_id)
+        if not channel_node or str(channel_node.get("type")) != "Channel":
+            raise SkillValidationError(f"Channel not found or wrong type: {channel_id}")
+        channel_data = node_payload(channel_node)
+
+        session_graph = graph.list_session(run_id)
+        nodes = session_graph.get("nodes", [])
+        matched = []
+        for node in nodes:
+            if str(node.get("type")) != "Message":
+                continue
+            data = node_payload(node)
+            if str(data.get("channel_id") or "") != channel_id:
+                continue
+            matched.append(
+                {
+                    "message_id": str(node.get("node_id") or ""),
+                    "channel_id": channel_id,
+                    "agent_id": str(data.get("agent_id") or ""),
+                    "task_id": str(data.get("task_id") or ""),
+                    "message": str(data.get("message") or ""),
+                    "level": str(data.get("level") or "info"),
+                    "ts_utc": node_timestamp(node).isoformat(),
+                }
+            )
+        matched.sort(key=lambda row: str(row.get("ts_utc") or ""), reverse=True)
+        return {
+            "channel_id": channel_id,
+            "channel_name": str(channel_data.get("channel_name") or ""),
+            "messages": matched[:limit],
+        }
+
     raise RuntimeError(f"No executor implemented for skill '{skill}'.")
 
 
@@ -925,7 +1126,7 @@ def _post_provenance_links(
     if not isinstance(receipt_id, str) or not receipt_id:
         return
 
-    if skill in {"claim_task", "complete_task", "verify_task"}:
+    if skill in {"claim_task", "complete_task", "verify_task", "post_channel_message"}:
         graph.put_edge(
             from_id=task_id,
             edge_type="TASK_EVIDENCED_BY",

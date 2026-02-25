@@ -1,0 +1,34 @@
+name: post_channel_message
+description: Post a typed communication update into a channel, optionally linked to a task.
+allowed_phases: [ACT]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, channel_id, agent_id, message]
+  properties:
+    run_id: {type: string}
+    channel_id: {type: string}
+    agent_id: {type: string}
+    message: {type: string}
+    task_id: {type: string}
+    level:
+      type: string
+      enum: [info, warning, error]
+    message_id: {type: string}
+outputs_schema:
+  type: object
+  required: [message_id, channel_id, agent_id, ts_utc, receipt_id]
+  properties:
+    message_id: {type: string}
+    channel_id: {type: string}
+    agent_id: {type: string}
+    task_id: {type: string}
+    ts_utc: {type: string}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  channel_id: channel-task-alpha
+  agent_id: worker-a
+  task_id: node-task-001
+  level: info
+  message: "Claim accepted. Uploading evidence artifact next."

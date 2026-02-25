@@ -163,7 +163,7 @@ Proposed emphasis:
 1. Total workshop runtime: a few hours.
 2. Attendee setup friction must remain low.
 3. Code footprint should stay small and teachable.
-4. Bedrock remains optional and non-blocking.
+4. Bedrock inference is available and used as the workshop model runtime.
 5. Must work with provisioned sandbox account model.
 
 ## 12) Risks and Mitigations
@@ -262,7 +262,7 @@ Instruction: choose one option per decision unless marked "multi-select."
 - Options:
   - `A` Retrieval-only
   - `B` Agent-native assembly + deterministic guardrails
-  - `C` `B` + optional model-assisted compaction helpers
+  - `C` `B` + model-assisted compaction helpers via Bedrock
 - Current recommendation: `C` (compaction helpers optional; guardrails always on)
 
 10. `[ ]` **D10 Verification policy**

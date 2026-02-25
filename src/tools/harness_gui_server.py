@@ -338,6 +338,127 @@ def _validate_ui_spec(spec: Any) -> tuple[bool, str | None]:
     return True, None
 
 
+def _normalize_ui_spec(spec: Any) -> tuple[Any, str | None]:
+    """Best-effort normalization for common model formatting misses."""
+    notes: list[str] = []
+    parent_edges: list[tuple[str, str]] = []
+
+    candidate = spec
+    if isinstance(candidate, str):
+        parsed, _ = _parse_json_object_from_text(candidate)
+        if isinstance(parsed, dict):
+            candidate = parsed
+            notes.append("ui.spec was a JSON string and was parsed into an object.")
+
+    if not isinstance(candidate, dict):
+        return candidate, " ".join(notes) if notes else None
+
+    normalized = dict(candidate)
+    elements = normalized.get("elements")
+    if isinstance(elements, list):
+        converted_elements: dict[str, Any] = {}
+        for index, element in enumerate(elements):
+            if not isinstance(element, dict):
+                continue
+            element_id = str(element.get("id") or f"el-{index + 1}").strip() or f"el-{index + 1}"
+            element_payload = {key: value for key, value in element.items() if key != "id"}
+            parent_id = element_payload.pop("parent", None)
+            if isinstance(parent_id, str) and parent_id.strip():
+                parent_edges.append((element_id, parent_id.strip()))
+            converted_elements[element_id] = element_payload
+        normalized["elements"] = converted_elements
+        elements = converted_elements
+        notes.append("ui.spec.elements list normalized to keyed object.")
+    elif isinstance(elements, dict):
+        converted_elements = {}
+        for element_id, element in elements.items():
+            key = str(element_id).strip()
+            if not key:
+                continue
+            if isinstance(element, dict):
+                element_payload = {item_key: item_value for item_key, item_value in element.items() if item_key != "id"}
+                parent_id = element_payload.pop("parent", None)
+                if isinstance(parent_id, str) and parent_id.strip():
+                    parent_edges.append((key, parent_id.strip()))
+                converted_elements[key] = element_payload
+            else:
+                converted_elements[key] = element
+        normalized["elements"] = converted_elements
+        elements = converted_elements
+
+    if not isinstance(elements, dict) or not elements:
+        return normalized, " ".join(notes) if notes else None
+
+    root = normalized.get("root")
+    if isinstance(root, dict):
+        root_payload = {key: value for key, value in root.items() if key != "id"}
+        if "props" not in root_payload or not isinstance(root_payload.get("props"), dict):
+            root_payload["props"] = {}
+        root_id = str(root.get("id") or "root").strip() or "root"
+        if root_id in elements:
+            root_id = "__root"
+        if not isinstance(root_payload.get("children"), list):
+            root_payload["children"] = []
+        if not root_payload["children"]:
+            referenced: set[str] = set()
+            for element in elements.values():
+                if not isinstance(element, dict):
+                    continue
+                children = element.get("children")
+                if not isinstance(children, list):
+                    continue
+                for child in children:
+                    if isinstance(child, str) and child in elements:
+                        referenced.add(child)
+            inferred_children = [element_id for element_id in elements if element_id not in referenced]
+            root_payload["children"] = inferred_children[:CHAT_SPEC_MAX_CHILDREN]
+        elements[root_id] = root_payload
+        normalized["root"] = root_id
+        root = root_id
+        notes.append(f"ui.spec.root object normalized to element id '{root_id}'.")
+
+    if parent_edges:
+        normalized_root = normalized.get("root")
+        linked = 0
+        for child_id, parent_id in parent_edges:
+            resolved_parent = parent_id
+            if parent_id == "root" and isinstance(normalized_root, str) and normalized_root.strip():
+                resolved_parent = normalized_root
+            parent_element = elements.get(resolved_parent)
+            if not isinstance(parent_element, dict):
+                continue
+            children = parent_element.get("children")
+            if not isinstance(children, list):
+                children = []
+                parent_element["children"] = children
+            if child_id not in children:
+                children.append(child_id)
+                linked += 1
+        if linked > 0:
+            notes.append(f"normalized {linked} parent->children references.")
+
+    root_valid = isinstance(root, str) and root.strip() and root in elements
+    if root_valid:
+        return normalized, " ".join(notes) if notes else None
+
+    referenced: set[str] = set()
+    for element in elements.values():
+        if not isinstance(element, dict):
+            continue
+        children = element.get("children")
+        if not isinstance(children, list):
+            continue
+        for child in children:
+            if isinstance(child, str) and child in elements:
+                referenced.add(child)
+
+    unreferenced_roots = [element_id for element_id in elements if element_id not in referenced]
+    inferred_root = unreferenced_roots[0] if unreferenced_roots else next(iter(elements))
+    normalized["root"] = inferred_root
+    notes.append(f"ui.spec.root inferred as '{inferred_root}' from elements.")
+    return normalized, " ".join(notes) if notes else None
+
+
 def _validate_component_props(component_name: str, props: dict[str, Any]) -> tuple[bool, str | None]:
     def require_keys(required: set[str]) -> tuple[bool, str | None]:
         missing = sorted(required - set(props.keys()))
@@ -565,11 +686,12 @@ def _parse_chat_model_output(raw_model_text: str) -> dict[str, Any]:
             requested_reason = ui_raw.get("reason")
             requested_reason_text = str(requested_reason).strip() if isinstance(requested_reason, str) else ""
             if requested_mode == "spec":
-                is_valid, reason = _validate_ui_spec(ui_raw.get("spec"))
+                normalized_spec, normalization_note = _normalize_ui_spec(ui_raw.get("spec"))
+                is_valid, reason = _validate_ui_spec(normalized_spec)
                 if is_valid:
                     ui_mode = "spec"
-                    ui_reason = requested_reason_text or "Model selected structured UI rendering."
-                    ui_spec = ui_raw.get("spec")
+                    ui_reason = requested_reason_text or normalization_note or "Model selected structured UI rendering."
+                    ui_spec = normalized_spec
                     ui_validate_ok = True
                     ui_rejection_reason = ""
                 else:
@@ -1243,9 +1365,101 @@ class HarnessGUIHandler(BaseHTTPRequestHandler):
         timeout_events.sort(key=lambda item: str(item.get("lease_expires_at") or ""), reverse=True)
         return {
             "counts": counts,
+            "state_counts": counts,
             "tasks": task_rows,
             "timeouts": timeout_events,
             "reassignments": reassign_events,
+        }
+
+    def _build_communication_projection(self, *, nodes: list[dict[str, Any]]) -> dict[str, Any]:
+        channels = [node for node in nodes if str(node.get("type")) == "Channel"]
+        messages = [node for node in nodes if str(node.get("type")) == "Message"]
+        messages.sort(key=lambda node: _node_turn_timestamp(node).timestamp())
+
+        messages_by_channel: dict[str, list[dict[str, Any]]] = {}
+        for message in messages:
+            message_data = _node_data(message)
+            channel_id = str(message_data.get("channel_id") or "").strip()
+            if not channel_id:
+                continue
+            messages_by_channel.setdefault(channel_id, []).append(message)
+
+        channel_rows = []
+        for channel in channels:
+            channel_data = _node_data(channel)
+            channel_id = str(channel.get("node_id") or "")
+            if not channel_id:
+                continue
+            message_rows = messages_by_channel.get(channel_id, [])
+            participants_raw = channel_data.get("participants")
+            participants = []
+            if isinstance(participants_raw, list):
+                participants = [str(participant).strip() for participant in participants_raw if str(participant).strip()]
+
+            recent_messages = []
+            for message in message_rows[-8:]:
+                message_data = _node_data(message)
+                recent_messages.append(
+                    {
+                        "message_id": str(message.get("node_id") or ""),
+                        "agent_id": str(message_data.get("agent_id") or ""),
+                        "task_id": str(message_data.get("task_id") or ""),
+                        "message": str(message_data.get("message") or ""),
+                        "ts_utc": _node_turn_timestamp(message).isoformat(),
+                    }
+                )
+
+            last_message_at = recent_messages[-1]["ts_utc"] if recent_messages else ""
+            channel_rows.append(
+                {
+                    "channel_id": channel_id,
+                    "channel_name": str(channel_data.get("channel_name") or ""),
+                    "topic": str(channel_data.get("topic") or ""),
+                    "participants": participants,
+                    "message_count": len(message_rows),
+                    "last_message_at": last_message_at,
+                    "recent_messages": recent_messages,
+                }
+            )
+
+        channel_rows.sort(key=lambda row: str(row.get("last_message_at") or ""), reverse=True)
+
+        recent_message_rows = []
+        for message in messages[-40:]:
+            message_data = _node_data(message)
+            recent_message_rows.append(
+                {
+                    "message_id": str(message.get("node_id") or ""),
+                    "channel_id": str(message_data.get("channel_id") or ""),
+                    "agent_id": str(message_data.get("agent_id") or ""),
+                    "task_id": str(message_data.get("task_id") or ""),
+                    "message": str(message_data.get("message") or ""),
+                    "ts_utc": _node_turn_timestamp(message).isoformat(),
+                }
+            )
+        recent_message_rows.sort(key=lambda row: str(row.get("ts_utc") or ""), reverse=True)
+
+        by_agent: dict[str, int] = {}
+        for row in recent_message_rows:
+            agent_id = str(row.get("agent_id") or "").strip()
+            if not agent_id:
+                continue
+            by_agent[agent_id] = by_agent.get(agent_id, 0) + 1
+
+        agent_activity = [
+            {"agent_id": agent_id, "message_count": count}
+            for agent_id, count in sorted(by_agent.items(), key=lambda item: (item[1], item[0]), reverse=True)
+        ]
+
+        return {
+            "channels": channel_rows,
+            "recent_messages": recent_message_rows,
+            "agent_activity": agent_activity,
+            "counts": {
+                "channels": len(channel_rows),
+                "messages": len(recent_message_rows),
+                "agents": len(agent_activity),
+            },
         }
 
     def _build_tool_access_matrix_projection(self) -> dict[str, Any]:
@@ -1500,6 +1714,7 @@ class HarnessGUIHandler(BaseHTTPRequestHandler):
             "runtime_timeline": self._build_runtime_timeline(nodes=limited_nodes, edges=edges, limit=limit),
             "ontology": self._build_ontology_projection(),
             "coordination": self._build_coordination_projection(nodes=limited_nodes, now_utc=now_utc),
+            "communication": self._build_communication_projection(nodes=limited_nodes),
             "tool_access_matrix": self._build_tool_access_matrix_projection(),
             "receipts_artifacts": self._build_receipts_artifacts_projection(nodes=limited_nodes, edges=edges),
             "verification_gates": self._build_verification_gates_projection(nodes=limited_nodes),

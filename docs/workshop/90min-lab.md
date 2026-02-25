@@ -13,7 +13,7 @@ make doctor
 
 Notes:
 - If you see `ExpiredToken` or `AccessDenied`, refresh AWS credentials via the workshop link and retry.
-- Bedrock is optional for this repo's golden path; the workshop can use it when available.
+- Bedrock inference is required for workshop chat/harness loops. Ensure model access is enabled in your workshop account.
 
 ## CP1: Single-Agent Lifecycle (PLAN -> ACT -> VERIFY)
 
