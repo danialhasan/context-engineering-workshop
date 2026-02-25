@@ -8,7 +8,7 @@ PYTHON := $(VENV_PYTHON)
 endif
 PIP ?= $(PYTHON) -m pip
 
-.PHONY: install doctor provision smoke compile bedrock-harness gui clean
+.PHONY: install doctor provision smoke compile bedrock-harness workshop-scenarios gui clean
 
 install:
 	@python3 -c 'import sys; sys.exit(0) if sys.version_info >= (3, 10) else sys.exit("Python 3.10+ is required for this repo.")'
@@ -53,6 +53,12 @@ bedrock-harness:
 		--max-history-turns $${MAX_HISTORY_TURNS:-8} \
 		--max-tokens $${MAX_TOKENS:-400} \
 		--temperature $${TEMPERATURE:-0.0}
+
+workshop-scenarios:
+	@if [ -z "$(SESSION_BASE)" ]; then echo "SESSION_BASE is required"; exit 1; fi
+	$(PYTHON) -m src.tools.workshop_scenarios \
+		--session-base "$(SESSION_BASE)" \
+		--scenario $${SCENARIO:-ALL}
 
 gui:
 	npm run gui:build

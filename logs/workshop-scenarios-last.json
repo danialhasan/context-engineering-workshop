@@ -1,0 +1,85 @@
+{
+  "ok": true,
+  "session_base": "liveA-20260225-163907",
+  "scenario": "A",
+  "runs": [
+    {
+      "scenario": "A",
+      "run_id": "liveA-20260225-163907-a",
+      "ok": true,
+      "steps": {
+        "create_task": {
+          "task_id": "node-4f6af79a41c4",
+          "state": "open",
+          "receipt_id": "node-2c6c10c13b1f",
+          "provenance": {
+            "skill_call_id": "node-66a8e4e2fbd9",
+            "receipt_id": "node-2c6c10c13b1f",
+            "artifact_node_id": "node-73cacc27cce8",
+            "artifact_uri": "s3://cew-artifacts-246374390081-us-west-2/workshop-artifacts/liveA-20260225-163907-a/2f367794-create_task-call.log"
+          }
+        },
+        "claim_task": {
+          "claim_id": "node-d8f3c6074315",
+          "task_id": "node-4f6af79a41c4",
+          "lease_expires_at": "2026-02-25T21:54:15.264499+00:00",
+          "receipt_id": "node-15b32f43c411",
+          "provenance": {
+            "skill_call_id": "node-6a0c6b9f951b",
+            "receipt_id": "node-15b32f43c411",
+            "artifact_node_id": "node-4225b1a42982",
+            "artifact_uri": "s3://cew-artifacts-246374390081-us-west-2/workshop-artifacts/liveA-20260225-163907-a/46693419-claim_task-call.log"
+          }
+        },
+        "upload_artifact": {
+          "s3_uri": "s3://cew-artifacts-246374390081-us-west-2/workshop-artifacts/liveA-20260225-163907-a/2e979d8c-scenario-a-evidence.txt",
+          "sha256": "fc746f90b9d3849c19e179dad2f90b2239d20da77493ea84e98e02e90a35b328",
+          "bytes": 45,
+          "artifact_id": "node-e8078fcb098b",
+          "receipt_id": "node-9e217dd9472f",
+          "provenance": {
+            "skill_call_id": "node-2b6aaaab0d99",
+            "receipt_id": "node-9e217dd9472f",
+            "artifact_node_id": "node-053248845452",
+            "artifact_uri": "s3://cew-artifacts-246374390081-us-west-2/workshop-artifacts/liveA-20260225-163907-a/ed6386a3-upload_artifact-call.log"
+          }
+        },
+        "complete_task": {
+          "task_id": "node-4f6af79a41c4",
+          "status": "success",
+          "receipt_id": "node-a53933253d2a",
+          "provenance": {
+            "skill_call_id": "node-845159627bf2",
+            "receipt_id": "node-a53933253d2a",
+            "artifact_node_id": "node-4b717f3a6052",
+            "artifact_uri": "s3://cew-artifacts-246374390081-us-west-2/workshop-artifacts/liveA-20260225-163907-a/142522e2-complete_task-call.log"
+          }
+        },
+        "verify_task": {
+          "test_result_id": "node-0ad9f94f7948",
+          "status": "pass",
+          "receipt_id": "node-3ec3bd1d6dc8",
+          "provenance": {
+            "skill_call_id": "node-68f8aafe2d3f",
+            "receipt_id": "node-3ec3bd1d6dc8",
+            "artifact_node_id": "node-99b6b675139a",
+            "artifact_uri": "s3://cew-artifacts-246374390081-us-west-2/workshop-artifacts/liveA-20260225-163907-a/68d68bd2-verify_task-call.log"
+          }
+        }
+      },
+      "expected_observations": [
+        "Task transitions open -> claimed -> completed -> done",
+        "Verification gate opens only after evidence check passes",
+        "Receipt and artifact linkage visible in graph"
+      ],
+      "summary": {
+        "task_id": "node-4f6af79a41c4",
+        "artifact_uri": "s3://cew-artifacts-246374390081-us-west-2/workshop-artifacts/liveA-20260225-163907-a/2e979d8c-scenario-a-evidence.txt",
+        "verification_status": "pass",
+        "task_state": "done",
+        "lease_expires_at": "2026-02-25T21:54:15.264499+00:00"
+      }
+    }
+  ],
+  "completed_at": "2026-02-25T21:39:53.548528+00:00"
+}

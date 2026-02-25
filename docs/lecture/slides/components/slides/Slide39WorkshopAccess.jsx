@@ -62,8 +62,8 @@ const Slide39WorkshopAccess = () => (
         <p className="text-[clamp(1.05rem,1.35vw,1.55rem)] text-slate-700 font-medium leading-snug">Set `AWS_*` + `CEW_*` env vars, run doctor checks, confirm DynamoDB/S3 access.</p>
       </div>
       <div className="bg-white/80 border border-slate-200 rounded-[1vw] p-[2.6%] shadow-sm">
-        <p className="text-[clamp(1rem,1.35vw,1.55rem)] font-bold text-indigo-700 uppercase tracking-wider mb-[1.3%]">4. Build and run harness</p>
-        <p className="text-[clamp(1.05rem,1.35vw,1.55rem)] text-slate-700 font-medium leading-snug">Implement missing pieces via coder-agent flow, then run single-agent and swarm paths with verification receipts.</p>
+        <p className="text-[clamp(1rem,1.35vw,1.55rem)] font-bold text-indigo-700 uppercase tracking-wider mb-[1.3%]">4. Run prebuilt lab paths</p>
+        <p className="text-[clamp(1.05rem,1.35vw,1.55rem)] text-slate-700 font-medium leading-snug">Run single-agent and swarm flows, inspect internals, then execute guided mutations with verification receipts.</p>
       </div>
     </div>
   </BaseSlide>

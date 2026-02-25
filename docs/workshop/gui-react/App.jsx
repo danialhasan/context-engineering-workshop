@@ -227,6 +227,144 @@ function buildRecentNodeItems(graphData) {
   }));
 }
 
+function pickProjections(glassCaseData) {
+  if (!isObject(glassCaseData)) {
+    return {};
+  }
+  return isObject(glassCaseData.projections) ? glassCaseData.projections : {};
+}
+
+function buildRuntimeTimelineItems(glassCaseData, fallbackRunData) {
+  const projectionTimeline = asArray(pickProjections(glassCaseData).runtime_timeline);
+  if (projectionTimeline.length > 0) {
+    return projectionTimeline.slice(-30).map((event, idx) => ({
+      title: `${safeText(event.kind || "event")} | ${safeText(event.node_id || `event_${idx + 1}`)}`,
+      meta: `ts: ${safeText(event.ts_utc || "-")} | status: ${safeText(event.status || "-")} | actor: ${safeText(event.actor || "-")}`,
+      body: safeText(event.summary || pretty(event)),
+      tone: safeText(event.status).toLowerCase().includes("fail") || safeText(event.status).toLowerCase().includes("blocked") ? "error" : "default",
+    }));
+  }
+  return buildTimelineItems(fallbackRunData);
+}
+
+function buildOntologyItems(glassCaseData) {
+  const ontology = pickProjections(glassCaseData).ontology;
+  if (!isObject(ontology)) {
+    return [];
+  }
+  const nodeTypes = asArray(ontology.node_types).slice(0, 20).map((entry) => ({
+    title: `NodeType: ${safeText(entry.node_type)}`,
+    meta: `required_fields: ${asArray(entry.required_fields).length}`,
+    body: asArray(entry.required_fields).join(", ") || "(none)",
+    tone: "default",
+  }));
+  const edgeTypes = asArray(ontology.edge_types).slice(0, 16).map((entry) => ({
+    title: `EdgeType: ${safeText(entry.edge_type)}`,
+    meta: `from: ${asArray(entry.from_types).length} | to: ${asArray(entry.to_types).length}`,
+    body: `from=[${asArray(entry.from_types).join(", ")}] to=[${asArray(entry.to_types).join(", ")}]`,
+    tone: "default",
+  }));
+  const constraints = asArray(ontology.constraints).slice(0, 10).map((entry) => ({
+    title: `Constraint: ${safeText(entry.id || "unnamed")}`,
+    meta: "ontology constraint",
+    body: safeText(entry.description || ""),
+    tone: "ok",
+  }));
+  return [...nodeTypes, ...edgeTypes, ...constraints];
+}
+
+function buildCoordinationItems(glassCaseData) {
+  const coordination = pickProjections(glassCaseData).coordination;
+  if (!isObject(coordination)) {
+    return [];
+  }
+  const tasks = asArray(coordination.tasks).slice(0, 24).map((task) => ({
+    title: `${safeText(task.task_id)} | ${safeText(task.state)}`,
+    meta: `owner: ${safeText(task.assigned_to || "-")} | claims: ${safeText(task.claim_count || 0)} | bucket: ${safeText(task.coordination_bucket || "-")}`,
+    body: safeText(task.title || "(untitled task)"),
+    tone: safeText(task.state).toLowerCase().includes("blocked") ? "error" : safeText(task.state).toLowerCase().includes("done") ? "ok" : "default",
+  }));
+  const timeouts = asArray(coordination.timeouts).slice(0, 8).map((timeout) => ({
+    title: `Timeout | task: ${safeText(timeout.task_id)}`,
+    meta: `agent: ${safeText(timeout.agent_id || "-")} | lease_expires_at: ${safeText(timeout.lease_expires_at || "-")}`,
+    body: `State at timeout: ${safeText(timeout.state || "-")}`,
+    tone: "error",
+  }));
+  const reassignments = asArray(coordination.reassignments).slice(0, 8).map((event) => ({
+    title: `Reassign | task: ${safeText(event.task_id)}`,
+    meta: `claim_count: ${safeText(event.claim_count || 0)} | resolved_to: ${safeText(event.resolved_to || "-")}`,
+    body: `Agents: ${asArray(event.agents).join(", ") || "-"}`,
+    tone: "ok",
+  }));
+  return [...tasks, ...timeouts, ...reassignments];
+}
+
+function buildToolAccessItems(glassCaseData) {
+  const matrix = pickProjections(glassCaseData).tool_access_matrix;
+  if (!isObject(matrix)) {
+    return [];
+  }
+  return asArray(matrix.roles).map((role) => ({
+    title: `Role: ${safeText(role.role)}`,
+    meta: `phases: ${asArray(role.phases).join(", ")} | allowed: ${safeText(role.allowed_count || 0)} | blocked: ${safeText(role.blocked_count || 0)}`,
+    body: `Allowed: ${asArray(role.allowed_skills).slice(0, 12).join(", ") || "-"}${asArray(role.allowed_skills).length > 12 ? " ..." : ""}`,
+    tone: "default",
+  }));
+}
+
+function buildReceiptArtifactItems(glassCaseData) {
+  const projection = pickProjections(glassCaseData).receipts_artifacts;
+  if (!isObject(projection)) {
+    return [];
+  }
+  const receipts = asArray(projection.receipts).slice(0, 20).map((receipt) => ({
+    title: `Receipt: ${safeText(receipt.receipt_id)}`,
+    meta: `skill: ${safeText(receipt.skill_name || "-")} | status: ${safeText(receipt.status || "-")} | ts: ${safeText(receipt.ts_utc || "-")}`,
+    body: `${safeText(receipt.summary || "")}${asArray(receipt.artifact_uris).length ? `\nArtifacts: ${asArray(receipt.artifact_uris).join(", ")}` : ""}`,
+    tone: safeText(receipt.status).toLowerCase().includes("success") ? "ok" : "error",
+  }));
+  const artifacts = asArray(projection.artifacts).slice(0, 12).map((artifact) => ({
+    title: `Artifact: ${safeText(artifact.artifact_id)}`,
+    meta: `name: ${safeText(artifact.name || "-")} | ts: ${safeText(artifact.ts_utc || "-")}`,
+    body: `${safeText(artifact.s3_uri || "-")}\nsha256: ${safeText(artifact.sha256 || "-")}`,
+    tone: "default",
+  }));
+  return [...receipts, ...artifacts];
+}
+
+function buildVerificationGateItems(glassCaseData) {
+  const projection = pickProjections(glassCaseData).verification_gates;
+  if (!isObject(projection)) {
+    return [];
+  }
+  return asArray(projection.tasks).slice(0, 24).map((task) => ({
+    title: `${safeText(task.task_id)} | local_gate=${safeText(task.local_completion_gate)} | promotion_gate=${safeText(task.promotion_gate_open)}`,
+    meta: `state: ${safeText(task.state)} | verification: ${safeText(task.verification_status || "-")} | blocked: ${safeText(task.blocked)}`,
+    body: `Reason: ${safeText(task.gate_reason || "-")} | test_result: ${safeText(task.test_result_id || "-")}`,
+    tone: task.promotion_gate_open ? "ok" : task.blocked ? "error" : "default",
+  }));
+}
+
+function buildFreshnessConflictItems(glassCaseData) {
+  const projection = pickProjections(glassCaseData).freshness_conflicts;
+  if (!isObject(projection)) {
+    return [];
+  }
+  const staleNodes = asArray(projection.stale_nodes).slice(0, 18).map((node) => ({
+    title: `Stale node: ${safeText(node.node_id)} | ${safeText(node.type)}`,
+    meta: `age_minutes: ${safeText(node.age_minutes)} | trust: ${safeText(node.trust_level || "-")} | version: ${safeText(node.version || "-")}`,
+    body: `${safeText(node.summary || "")}\nsupersedes: ${safeText(node.supersedes || "-")} | fresh_until: ${safeText(node.fresh_until || "-")}`,
+    tone: "error",
+  }));
+  const conflicts = asArray(projection.conflicts).slice(0, 12).map((conflict) => ({
+    title: `Conflict task: ${safeText(conflict.task_id)} | claims: ${safeText(conflict.claim_count || 0)}`,
+    meta: `resolved_to: ${safeText(conflict.resolved_to || "-")} | verification: ${safeText(conflict.verification_status || "-")}`,
+    body: `Agents: ${asArray(conflict.agents).join(", ") || "-"} | policy: ${safeText(conflict.resolution_policy || "-")}`,
+    tone: "default",
+  }));
+  return [...staleNodes, ...conflicts];
+}
+
 function computeGraphLayout(nodes, width, height) {
   const safeNodes = nodes.slice(0, 48);
   const count = Math.max(safeNodes.length, 1);
@@ -461,22 +599,29 @@ const { registry } = defineRegistry(catalog, {
   },
 });
 
-function buildDashboardSpec({ runData, graphData, memoryData, requestStatus }) {
+function buildDashboardSpec({ runData, graphData, memoryData, glassCaseData, requestStatus }) {
   const graph = pickGraph(graphData);
   const nodes = asArray(graph.nodes);
   const edges = asArray(graph.edges);
   const runStatus = runData ? (runData.ok ? "Completed" : "Needs attention") : "No run yet";
   const steps = runData && runData.steps_executed !== undefined ? safeText(runData.steps_executed) : "-";
   const finalResponse = safeText(runData?.final_response || runData?.response || runData?.output || runData?.error || "");
-
-  const timelineItems = buildTimelineItems(runData);
+  const projections = pickProjections(glassCaseData);
+  const timelineItems = buildRuntimeTimelineItems(glassCaseData, runData);
   const toolItems = buildToolItems(runData);
   const memoryItems = buildMemoryItems(memoryData);
   const recentNodeItems = buildRecentNodeItems(graphData);
+  const ontologyItems = buildOntologyItems(glassCaseData);
+  const coordinationItems = buildCoordinationItems(glassCaseData);
+  const toolAccessItems = buildToolAccessItems(glassCaseData);
+  const receiptArtifactItems = buildReceiptArtifactItems(glassCaseData);
+  const gateItems = buildVerificationGateItems(glassCaseData);
+  const freshnessConflictItems = buildFreshnessConflictItems(glassCaseData);
 
   const nodeCount = safeText(graph?.counts?.nodes ?? graph?.node_count ?? graph?.nodes_count ?? nodes.length ?? "-");
   const edgeCount = safeText(graph?.counts?.edges ?? graph?.edge_count ?? graph?.edges_count ?? edges.length ?? "-");
   const updatedAt = safeText(graph?.updated_at || graph?.updatedAt || graph?.ts || new Date().toLocaleTimeString());
+  const projectionUpdatedAt = safeText(glassCaseData?.generated_at || updatedAt);
 
   return {
     root: "root",
@@ -489,12 +634,24 @@ function buildDashboardSpec({ runData, graphData, memoryData, requestStatus }) {
       grid: {
         type: "DashboardGrid",
         props: {},
-        children: ["runPanel", "timelinePanel", "toolsPanel", "memoryPanel", "graphPanel"],
+        children: [
+          "runPanel",
+          "timelinePanel",
+          "toolsPanel",
+          "coordinationPanel",
+          "verificationPanel",
+          "freshnessPanel",
+          "memoryPanel",
+          "receiptPanel",
+          "ontologyPanel",
+          "accessPanel",
+          "graphPanel",
+        ],
       },
       runPanel: {
         type: "Panel",
         props: { title: "Run Status + Final Response", subtitle: null, span: "1" },
-        children: ["runSummary", "runRaw"],
+        children: ["runSummary", "runRaw", "projectionRaw"],
       },
       runSummary: {
         type: "RunSummary",
@@ -512,15 +669,22 @@ function buildDashboardSpec({ runData, graphData, memoryData, requestStatus }) {
           value: runData || {},
         },
       },
+      projectionRaw: {
+        type: "JsonBlock",
+        props: {
+          label: "Raw glass-case projections",
+          value: projections || {},
+        },
+      },
       timelinePanel: {
         type: "Panel",
-        props: { title: "Timeline (Turns / Actions / Tool Calls)", subtitle: null, span: "1" },
+        props: { title: "Panel 1: Runtime Timeline", subtitle: `updated: ${projectionUpdatedAt}`, span: "1" },
         children: ["timelineList"],
       },
       timelineList: {
         type: "EventList",
         props: {
-          emptyLabel: "No timeline turns found in run payload.",
+          emptyLabel: "No timeline events found.",
           items: timelineItems,
         },
       },
@@ -536,6 +700,42 @@ function buildDashboardSpec({ runData, graphData, memoryData, requestStatus }) {
           items: toolItems,
         },
       },
+      coordinationPanel: {
+        type: "Panel",
+        props: { title: "Panel 4: Coordination State (Swarm)", subtitle: "queue -> claimed -> verify_pending -> done/failed", span: "1" },
+        children: ["coordinationList"],
+      },
+      coordinationList: {
+        type: "EventList",
+        props: {
+          emptyLabel: "No coordination state yet.",
+          items: coordinationItems,
+        },
+      },
+      verificationPanel: {
+        type: "Panel",
+        props: { title: "Panel 7: Verification Gates", subtitle: "why blocked / why promoted", span: "1" },
+        children: ["verificationList"],
+      },
+      verificationList: {
+        type: "EventList",
+        props: {
+          emptyLabel: "No verification gate records yet.",
+          items: gateItems,
+        },
+      },
+      freshnessPanel: {
+        type: "Panel",
+        props: { title: "Panel 8: Freshness + Conflict Resolver", subtitle: "stale nodes, lineage, and conflicts", span: "1" },
+        children: ["freshnessList"],
+      },
+      freshnessList: {
+        type: "EventList",
+        props: {
+          emptyLabel: "No stale/conflict records yet.",
+          items: freshnessConflictItems,
+        },
+      },
       memoryPanel: {
         type: "Panel",
         props: { title: "Session Memory Turns (Decision Nodes)", subtitle: null, span: "1" },
@@ -548,9 +748,45 @@ function buildDashboardSpec({ runData, graphData, memoryData, requestStatus }) {
           items: memoryItems,
         },
       },
+      receiptPanel: {
+        type: "Panel",
+        props: { title: "Panel 6: Receipts + Artifacts", subtitle: "Evidence drilldown", span: "1" },
+        children: ["receiptList"],
+      },
+      receiptList: {
+        type: "EventList",
+        props: {
+          emptyLabel: "No receipts or artifacts yet.",
+          items: receiptArtifactItems,
+        },
+      },
+      ontologyPanel: {
+        type: "Panel",
+        props: { title: "Panel 2: Ontology Explorer", subtitle: "entities, relationships, constraints", span: "1" },
+        children: ["ontologyList"],
+      },
+      ontologyList: {
+        type: "EventList",
+        props: {
+          emptyLabel: "Ontology projection unavailable.",
+          items: ontologyItems,
+        },
+      },
+      accessPanel: {
+        type: "Panel",
+        props: { title: "Panel 5: Tool Access Matrix", subtitle: "role-scoped allow/deny", span: "1" },
+        children: ["accessList"],
+      },
+      accessList: {
+        type: "EventList",
+        props: {
+          emptyLabel: "No tool access matrix data available.",
+          items: toolAccessItems,
+        },
+      },
       graphPanel: {
         type: "Panel",
-        props: { title: "Graph Snapshot", subtitle: null, span: "2" },
+        props: { title: "Panel 3: Context Graph View", subtitle: null, span: "2" },
         children: ["graphStats", "graphView", "graphRecent", "graphRaw"],
       },
       graphStats: {
@@ -877,6 +1113,7 @@ export default function App() {
   const [runData, setRunData] = useState(null);
   const [graphData, setGraphData] = useState(null);
   const [memoryData, setMemoryData] = useState(null);
+  const [glassCaseData, setGlassCaseData] = useState(null);
 
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
@@ -888,8 +1125,8 @@ export default function App() {
   const [chatHydrating, setChatHydrating] = useState(false);
 
   const dashboardSpec = useMemo(
-    () => buildDashboardSpec({ runData, graphData, memoryData, requestStatus }),
-    [runData, graphData, memoryData, requestStatus]
+    () => buildDashboardSpec({ runData, graphData, memoryData, glassCaseData, requestStatus }),
+    [runData, graphData, memoryData, glassCaseData, requestStatus]
   );
   const componentRegistrySpec = useMemo(() => buildComponentRegistrySpec(), []);
 
@@ -910,6 +1147,9 @@ export default function App() {
     if (route !== ROUTES.CHAT) {
       return undefined;
     }
+    if (chatSending) {
+      return undefined;
+    }
     const activeControls = normalizedChatControls();
     if (!activeControls.session) {
       setChatThreads([]);
@@ -925,16 +1165,12 @@ export default function App() {
           return;
         }
         const hasSelectedThread = threads.some((thread) => thread.session_key === activeControls.session_key);
-        const preferredKey = hasSelectedThread
-          ? activeControls.session_key
-          : safeText(threads[0]?.session_key).trim() || activeControls.session_key;
-        if (preferredKey !== activeControls.session_key) {
-          const nextControls = { ...controls, session_key: preferredKey };
-          saveControls(nextControls);
-          setControls(nextControls);
+        if (!hasSelectedThread) {
+          // Preserve an explicit new conversation key until the first turn is sent.
+          setChatMessages([]);
           return;
         }
-        await hydrateChatHistory({ ...activeControls, session_key: preferredKey }, { silent: true });
+        await hydrateChatHistory(activeControls, { silent: true });
       } catch (error) {
         if (!cancelled) {
           setChatStatus(`Conversation sync failed: ${safeText(error?.message || error)}`);
@@ -946,7 +1182,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [route, controls.session, controls.session_key]);
+  }, [route, controls.session, controls.session_key, chatSending]);
 
   function navigateTo(path) {
     const normalized = normalizeRoute(path);
@@ -984,6 +1220,16 @@ export default function App() {
     const body = await requestJson(endpoint, { method: "GET", headers: { Accept: "application/json" } });
     setMemoryData(body || {});
     setRequestStatus(`Memory loaded via GET ${endpoint}`);
+  }
+
+  async function refreshGlassCase(activeControls) {
+    const sessionId = encodeURIComponent(activeControls.session.trim());
+    const endpoint = `/api/session/${sessionId}/glass-case?limit=300&ttl_minutes=30`;
+    setRequestError(false);
+    setRequestStatus("Refreshing glass-case projections...");
+    const body = await requestJson(endpoint, { method: "GET", headers: { Accept: "application/json" } });
+    setGlassCaseData(body || {});
+    setRequestStatus(`Glass-case loaded via GET ${endpoint}`);
   }
 
   async function runHarness(event) {
@@ -1031,6 +1277,7 @@ export default function App() {
       setRequestStatus(`Run loaded via POST /api/harness/run for session ${activeControls.session}`);
       await refreshGraph(activeControls);
       await refreshMemory(activeControls);
+      await refreshGlassCase(activeControls);
     } catch (error) {
       setRequestError(true);
       setRequestStatus(`Run request failed: ${safeText(error?.message || error)}`);
@@ -1052,6 +1299,15 @@ export default function App() {
     } catch (error) {
       setRequestError(true);
       setRequestStatus(`Memory request failed: ${safeText(error?.message || error)}`);
+    }
+  }
+
+  async function onRefreshGlassCase() {
+    try {
+      await refreshGlassCase(controls);
+    } catch (error) {
+      setRequestError(true);
+      setRequestStatus(`Glass-case request failed: ${safeText(error?.message || error)}`);
     }
   }
 
@@ -1339,6 +1595,7 @@ export default function App() {
               <button id="run-harness" type="submit">Run Harness</button>
               <button type="button" onClick={onRefreshGraph}>Refresh Graph</button>
               <button type="button" onClick={onRefreshMemory}>Refresh Memory</button>
+              <button type="button" onClick={onRefreshGlassCase}>Refresh Glass Case</button>
             </div>
           </form>
           <p className={`hint ${requestError ? "is-error" : ""}`}>{requestStatus}</p>

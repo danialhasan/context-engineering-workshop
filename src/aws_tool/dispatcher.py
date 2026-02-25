@@ -5,8 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Callable
 
 from src.artifacts.store import ArtifactStore
@@ -639,6 +640,17 @@ def _execute_skill_impl(
         if not task_node or str(task_node.get("type")) != "Task":
             raise SkillValidationError(f"Task not found or wrong type: {task_id}")
 
+        lease_seconds_raw = payload.get("lease_seconds")
+        lease_expires_at = None
+        if lease_seconds_raw is not None:
+            try:
+                lease_seconds = int(lease_seconds_raw)
+            except (TypeError, ValueError) as exc:
+                raise SkillValidationError("claim_task.lease_seconds must be an integer.") from exc
+            if lease_seconds <= 0:
+                raise SkillValidationError("claim_task.lease_seconds must be > 0 when provided.")
+            lease_expires_at = (datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)).isoformat()
+
         task_data = node_payload(task_node)
         task_data.update(
             {
@@ -647,6 +659,8 @@ def _execute_skill_impl(
                 "claimed_at": _utcnow(),
             }
         )
+        if lease_expires_at:
+            task_data["lease_expires_at"] = lease_expires_at
         graph.put_node(
             type="Task",
             data=task_data,
@@ -662,6 +676,7 @@ def _execute_skill_impl(
                 "agent_id": payload["agent_id"],
                 "task_id": task_id,
                 "ts_utc": _utcnow(),
+                "lease_expires_at": lease_expires_at,
             },
             session_id=run_id,
             validated=True,
@@ -673,7 +688,7 @@ def _execute_skill_impl(
             session_id=run_id,
         )
         log(f"Claimed task {task_id} with claim {claim_id}.")
-        return {"claim_id": claim_id, "task_id": task_id}
+        return {"claim_id": claim_id, "task_id": task_id, "lease_expires_at": lease_expires_at}
 
     if skill == "complete_task":
         task_id = str(payload["task_id"])
@@ -714,11 +729,25 @@ def _execute_skill_impl(
         details: dict[str, Any] = {"check_type": check_type, "artifact_uri": artifact_uri}
 
         if check_type == "s3_head_object":
-            if not artifact_uri.startswith("s3://"):
-                raise SkillValidationError("verify_task with s3_head_object requires artifact_uri starting with s3://")
             if mock_mode:
-                details["note"] = "mock_mode: skipped s3 head-object"
+                if artifact_uri.startswith("s3://"):
+                    # Keep mock behavior deterministic while allowing scenario flows to force failures.
+                    if "missing" in artifact_uri.lower():
+                        status = "fail"
+                        details["error"] = "mock_mode: simulated missing S3 object"
+                    else:
+                        details["note"] = "mock_mode: skipped s3 head-object"
+                else:
+                    local_artifact = Path(artifact_uri)
+                    if local_artifact.exists():
+                        details["note"] = "mock_mode: verified local artifact path exists"
+                        details["local_path"] = str(local_artifact)
+                    else:
+                        status = "fail"
+                        details["error"] = f"mock_mode: local artifact path not found: {artifact_uri}"
             else:
+                if not artifact_uri.startswith("s3://"):
+                    raise SkillValidationError("verify_task with s3_head_object requires artifact_uri starting with s3://")
                 bucket_key = artifact_uri.replace("s3://", "", 1)
                 if "/" not in bucket_key:
                     raise SkillValidationError("artifact_uri must be of form s3://bucket/key")

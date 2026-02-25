@@ -17,19 +17,28 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from src.aws_tool.cli import handle_request as aws_tool_handle_request
 from src.graph.context_graph import GraphStore, MissingTableError
+from src.graph.ontology import load_ontology
 from src.orchestrator.bedrock_harness import (
     BedrockHarnessConfig,
     DEFAULT_SYSTEM_PROMPT,
     run_bedrock_harness,
 )
+from src.skills.loader import load_skill_definitions
 
 HOST = "127.0.0.1"
 ALLOWED_PHASES = {"PLAN", "ACT", "VERIFY"}
 DEFAULT_STATIC_ROOT = Path(__file__).resolve().parents[2] / "docs" / "workshop" / "gui"
+GLASS_CASE_DEFAULT_TTL_MINUTES = 30
 CHAT_SPEC_MAX_ELEMENTS = 96
 CHAT_SPEC_MAX_CHILDREN = 32
 CHAT_SPEC_MAX_EVENT_ITEMS = 80
 CHAT_SPEC_MAX_GRAPH_ITEMS = 120
+ROLE_PHASE_POLICY: dict[str, set[str]] = {
+    "planner": {"PLAN"},
+    "worker": {"ACT"},
+    "executor": {"ACT", "VERIFY"},
+    "verifier": {"VERIFY"},
+}
 CHAT_ALLOWED_COMPONENTS: dict[str, dict[str, Any]] = {
     "Stack": {"props": {}},
     "DashboardGrid": {"props": {}},
@@ -630,6 +639,36 @@ def _node_turn_index(node: dict[str, Any]) -> int:
         return 0
 
 
+def _parse_iso_datetime(raw: Any) -> datetime | None:
+    if raw in {None, ""}:
+        return None
+    try:
+        value = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _node_summary_text(node: dict[str, Any]) -> str:
+    data = _node_data(node)
+    for key in (
+        "summary",
+        "title",
+        "description",
+        "text",
+        "response",
+        "message",
+        "skill_name",
+        "status",
+    ):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return _truncate_text(value.strip(), max_chars=220)
+    return _truncate_text(json.dumps(data, sort_keys=True, default=str), max_chars=220)
+
+
 def _parse_harness_config(payload: dict[str, Any]) -> BedrockHarnessConfig:
     run_id = str(
         payload.get("run_id")
@@ -884,6 +923,9 @@ class HarnessGUIHandler(BaseHTTPRequestHandler):
         if resource_parts == ["memory"]:
             self._handle_session_memory(session_id=session_id, query=query)
             return
+        if resource_parts == ["glass-case"]:
+            self._handle_session_glass_case(session_id=session_id, query=query)
+            return
         if len(resource_parts) >= 1 and resource_parts[0] == "chat":
             self._handle_session_chat(session_id=session_id, resource_parts=resource_parts[1:], query=query)
             return
@@ -894,7 +936,7 @@ class HarnessGUIHandler(BaseHTTPRequestHandler):
             message=f"Unknown session route '{path}'.",
             hint=(
                 "Use /api/session/{session_id}/graph, /api/session/{session_id}/memory, "
-                "or /api/session/{session_id}/chat/threads."
+                "/api/session/{session_id}/chat/threads, or /api/session/{session_id}/glass-case."
             ),
         )
 
@@ -907,7 +949,8 @@ class HarnessGUIHandler(BaseHTTPRequestHandler):
                 message=f"Unknown API route '{path}'.",
                 hint=(
                     "Use /api/health, /api/session/{session_id}/graph, "
-                    "/api/session/{session_id}/memory, or /api/session/{session_id}/chat/threads."
+                    "/api/session/{session_id}/memory, /api/session/{session_id}/chat/threads, "
+                    "or /api/session/{session_id}/glass-case."
                 ),
             )
         session_id = unquote(parts[2]).strip()
@@ -980,6 +1023,501 @@ class HarnessGUIHandler(BaseHTTPRequestHandler):
                 "session_key": session_key,
                 "nodes": memory_nodes,
                 "count": len(memory_nodes),
+            },
+        )
+
+    def _load_session_graph(self, *, session_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        graph_store = GraphStore()
+        session_graph = graph_store.list_session(session_id)
+        nodes = list(session_graph.get("nodes", []))
+        edges = list(session_graph.get("edges", []))
+        return nodes, edges
+
+    def _build_runtime_timeline(
+        self, *, nodes: list[dict[str, Any]], edges: list[dict[str, Any]], limit: int
+    ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        edge_lookup: dict[str, list[dict[str, Any]]] = {}
+        for edge in edges:
+            from_id = str(edge.get("from_id") or "")
+            if not from_id:
+                continue
+            edge_lookup.setdefault(from_id, []).append(edge)
+
+        for node in nodes:
+            node_type = str(node.get("type") or "")
+            if node_type not in {
+                "Task",
+                "Claim",
+                "Receipt",
+                "Artifact",
+                "TestResult",
+                "SkillCall",
+                "Decision",
+                "Summary",
+            }:
+                continue
+
+            data = _node_data(node)
+            node_id = str(node.get("node_id") or "")
+            ts = _node_turn_timestamp(node).isoformat()
+            status = (
+                str(data.get("state"))
+                if data.get("state") is not None
+                else str(data.get("status") or data.get("verification_status") or "")
+            )
+            related_edges = edge_lookup.get(node_id, [])
+            edge_types = sorted({str(edge.get("edge_type") or "") for edge in related_edges if edge.get("edge_type")})
+            events.append(
+                {
+                    "ts_utc": ts,
+                    "kind": node_type,
+                    "node_id": node_id,
+                    "status": status,
+                    "validated": bool(node.get("validated")),
+                    "summary": _node_summary_text(node),
+                    "actor": str(
+                        data.get("agent_id")
+                        or data.get("assigned_to")
+                        or data.get("completed_by")
+                        or data.get("skill_name")
+                        or ""
+                    ),
+                    "edge_types": edge_types,
+                }
+            )
+
+        events.sort(key=lambda item: str(item.get("ts_utc") or ""))
+        return events[-limit:] if limit > 0 else events
+
+    def _build_ontology_projection(self) -> dict[str, Any]:
+        ontology = load_ontology()
+        node_types_raw = ontology.get("node_types", {})
+        edge_types_raw = ontology.get("edge_types", {})
+        constraints_raw = ontology.get("constraints", [])
+
+        node_types = []
+        if isinstance(node_types_raw, dict):
+            for node_type, details in sorted(node_types_raw.items()):
+                required = details.get("required_fields", []) if isinstance(details, dict) else []
+                node_types.append(
+                    {
+                        "node_type": str(node_type),
+                        "required_fields": list(required) if isinstance(required, list) else [],
+                    }
+                )
+
+        edge_types = []
+        if isinstance(edge_types_raw, dict):
+            for edge_type, details in sorted(edge_types_raw.items()):
+                from_types = details.get("from_types", []) if isinstance(details, dict) else []
+                to_types = details.get("to_types", []) if isinstance(details, dict) else []
+                edge_types.append(
+                    {
+                        "edge_type": str(edge_type),
+                        "from_types": list(from_types) if isinstance(from_types, list) else [],
+                        "to_types": list(to_types) if isinstance(to_types, list) else [],
+                    }
+                )
+
+        constraints = []
+        if isinstance(constraints_raw, list):
+            for item in constraints_raw:
+                if not isinstance(item, dict):
+                    continue
+                constraints.append(
+                    {
+                        "id": str(item.get("id") or ""),
+                        "description": str(item.get("description") or ""),
+                    }
+                )
+
+        return {
+            "node_types": node_types,
+            "edge_types": edge_types,
+            "constraints": constraints,
+            "counts": {
+                "node_types": len(node_types),
+                "edge_types": len(edge_types),
+                "constraints": len(constraints),
+            },
+        }
+
+    def _build_coordination_projection(
+        self, *, nodes: list[dict[str, Any]], now_utc: datetime
+    ) -> dict[str, Any]:
+        def normalize_task_state(state: str) -> str:
+            normalized = state.strip().lower()
+            if normalized in {"open", "queued", "queue"}:
+                return "queue"
+            if normalized in {"claimed"}:
+                return "claimed"
+            if normalized in {"active", "in_progress"}:
+                return "active"
+            if normalized in {"completed", "verify_pending", "pending_verification"}:
+                return "verify_pending"
+            if normalized in {"done", "verified"}:
+                return "done"
+            if normalized in {"blocked", "failed", "error"}:
+                return "failed"
+            return "queue"
+
+        tasks = [node for node in nodes if str(node.get("type")) == "Task"]
+        claims = [node for node in nodes if str(node.get("type")) == "Claim"]
+        claims_by_task: dict[str, list[dict[str, Any]]] = {}
+        for claim in claims:
+            task_id = str(_node_data(claim).get("task_id") or "")
+            if not task_id:
+                continue
+            claims_by_task.setdefault(task_id, []).append(claim)
+
+        for items in claims_by_task.values():
+            items.sort(key=lambda node: _node_turn_timestamp(node).timestamp())
+
+        counts = {"queue": 0, "claimed": 0, "active": 0, "verify_pending": 0, "done": 0, "failed": 0}
+        task_rows = []
+        timeout_events = []
+        reassign_events = []
+        for task in tasks:
+            task_id = str(task.get("node_id") or "")
+            data = _node_data(task)
+            state_raw = str(data.get("state") or "open")
+            state = normalize_task_state(state_raw)
+            counts[state] += 1
+
+            task_claims = claims_by_task.get(task_id, [])
+            distinct_agents = sorted(
+                {
+                    str(_node_data(claim).get("agent_id") or "")
+                    for claim in task_claims
+                    if str(_node_data(claim).get("agent_id") or "")
+                }
+            )
+            latest_claim = task_claims[-1] if task_claims else None
+            latest_claim_data = _node_data(latest_claim) if isinstance(latest_claim, dict) else {}
+            latest_lease = latest_claim_data.get("lease_expires_at") or data.get("lease_expires_at")
+            latest_lease_dt = _parse_iso_datetime(latest_lease)
+            timed_out = bool(latest_lease_dt and latest_lease_dt < now_utc)
+            if timed_out:
+                timeout_events.append(
+                    {
+                        "task_id": task_id,
+                        "agent_id": str(latest_claim_data.get("agent_id") or ""),
+                        "lease_expires_at": latest_lease_dt.isoformat(),
+                        "state": state_raw,
+                    }
+                )
+
+            if len(distinct_agents) > 1:
+                reassign_events.append(
+                    {
+                        "task_id": task_id,
+                        "agents": distinct_agents,
+                        "claim_count": len(task_claims),
+                        "resolved_to": str(
+                            data.get("completed_by")
+                            or data.get("assigned_to")
+                            or latest_claim_data.get("agent_id")
+                            or ""
+                        ),
+                    }
+                )
+
+            task_rows.append(
+                {
+                    "task_id": task_id,
+                    "title": str(data.get("title") or ""),
+                    "state": state_raw,
+                    "coordination_bucket": state,
+                    "assigned_to": str(data.get("assigned_to") or ""),
+                    "claim_count": len(task_claims),
+                    "claim_agents": distinct_agents,
+                    "lease_expires_at": latest_lease_dt.isoformat() if latest_lease_dt else "",
+                    "timed_out": timed_out,
+                    "verification_status": str(data.get("verification_status") or ""),
+                    "updated_at": _node_turn_timestamp(task).isoformat(),
+                }
+            )
+
+        task_rows.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+        timeout_events.sort(key=lambda item: str(item.get("lease_expires_at") or ""), reverse=True)
+        return {
+            "counts": counts,
+            "tasks": task_rows,
+            "timeouts": timeout_events,
+            "reassignments": reassign_events,
+        }
+
+    def _build_tool_access_matrix_projection(self) -> dict[str, Any]:
+        skills = load_skill_definitions()
+        skill_rows = []
+        for name in sorted(skills.keys()):
+            skill_def = skills[name]
+            allowed_phases = [str(phase) for phase in skill_def.get("allowed_phases") or []]
+            skill_rows.append(
+                {
+                    "skill": str(name),
+                    "allowed_phases": allowed_phases,
+                    "description": str(skill_def.get("description") or ""),
+                }
+            )
+
+        role_rows = []
+        for role, phases in ROLE_PHASE_POLICY.items():
+            allowed = []
+            blocked = []
+            for row in skill_rows:
+                if any(phase in phases for phase in row["allowed_phases"]):
+                    allowed.append(row["skill"])
+                else:
+                    blocked.append(row["skill"])
+            role_rows.append(
+                {
+                    "role": role,
+                    "phases": sorted(phases),
+                    "allowed_skills": sorted(allowed),
+                    "blocked_skills": sorted(blocked),
+                    "allowed_count": len(allowed),
+                    "blocked_count": len(blocked),
+                }
+            )
+
+        return {
+            "roles": role_rows,
+            "skills": skill_rows,
+            "counts": {"roles": len(role_rows), "skills": len(skill_rows)},
+        }
+
+    def _build_receipts_artifacts_projection(
+        self, *, nodes: list[dict[str, Any]], edges: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        artifacts = [node for node in nodes if str(node.get("type")) == "Artifact"]
+        receipts = [node for node in nodes if str(node.get("type")) == "Receipt"]
+
+        artifact_by_id: dict[str, dict[str, Any]] = {
+            str(node.get("node_id") or ""): node for node in artifacts if str(node.get("node_id") or "")
+        }
+        artifacts_by_receipt: dict[str, list[str]] = {}
+        for edge in edges:
+            edge_type = str(edge.get("edge_type") or "")
+            if edge_type not in {"RECEIPT_POINTS_TO", "references"}:
+                continue
+            from_id = str(edge.get("from_id") or "")
+            to_id = str(edge.get("to_id") or "")
+            if not from_id or not to_id:
+                continue
+            artifact_node = artifact_by_id.get(to_id)
+            if not artifact_node:
+                continue
+            artifact_data = _node_data(artifact_node)
+            artifact_uri = str(artifact_data.get("s3_uri") or "")
+            if artifact_uri:
+                artifacts_by_receipt.setdefault(from_id, []).append(artifact_uri)
+
+        receipt_rows = []
+        for receipt in receipts:
+            receipt_id = str(receipt.get("node_id") or "")
+            data = _node_data(receipt)
+            linked = list(dict.fromkeys(artifacts_by_receipt.get(receipt_id, [])))
+            inline_uri = str(data.get("artifact_uri") or "")
+            if inline_uri and inline_uri not in linked:
+                linked.append(inline_uri)
+            receipt_rows.append(
+                {
+                    "receipt_id": receipt_id,
+                    "skill_name": str(data.get("skill_name") or ""),
+                    "status": str(data.get("status") or ""),
+                    "summary": _node_summary_text(receipt),
+                    "ts_utc": str(data.get("ts_utc") or _node_turn_timestamp(receipt).isoformat()),
+                    "checksum": str(data.get("checksum") or ""),
+                    "artifact_uris": linked,
+                }
+            )
+
+        receipt_rows.sort(key=lambda item: str(item.get("ts_utc") or ""), reverse=True)
+
+        artifact_rows = []
+        for artifact in artifacts:
+            data = _node_data(artifact)
+            artifact_rows.append(
+                {
+                    "artifact_id": str(artifact.get("node_id") or ""),
+                    "name": str(data.get("name") or ""),
+                    "s3_uri": str(data.get("s3_uri") or ""),
+                    "sha256": str(data.get("sha256") or ""),
+                    "ts_utc": _node_turn_timestamp(artifact).isoformat(),
+                }
+            )
+        artifact_rows.sort(key=lambda item: str(item.get("ts_utc") or ""), reverse=True)
+        return {
+            "receipts": receipt_rows,
+            "artifacts": artifact_rows,
+            "counts": {"receipts": len(receipt_rows), "artifacts": len(artifact_rows)},
+        }
+
+    def _build_verification_gates_projection(self, *, nodes: list[dict[str, Any]]) -> dict[str, Any]:
+        tasks = [node for node in nodes if str(node.get("type")) == "Task"]
+        test_results = {
+            str(node.get("node_id") or ""): node
+            for node in nodes
+            if str(node.get("type")) == "TestResult" and str(node.get("node_id") or "")
+        }
+
+        rows = []
+        for task in tasks:
+            data = _node_data(task)
+            state = str(data.get("state") or "open")
+            verification_status = str(data.get("verification_status") or "")
+            test_result_id = str(data.get("verification_test_result_id") or "")
+            result_node = test_results.get(test_result_id)
+            result_data = _node_data(result_node) if isinstance(result_node, dict) else {}
+            details = result_data.get("details")
+            details_error = ""
+            if isinstance(details, dict):
+                details_error = str(details.get("error") or "")
+
+            local_gate = state in {"completed", "done", "blocked"}
+            promoted = state == "done" and bool(task.get("validated"))
+            blocked = state == "blocked" or verification_status == "fail"
+            if promoted:
+                reason = "verified_promotion"
+            elif blocked:
+                reason = details_error or "verification_failed"
+            elif local_gate:
+                reason = "awaiting_verification"
+            else:
+                reason = "not_completed"
+
+            rows.append(
+                {
+                    "task_id": str(task.get("node_id") or ""),
+                    "title": str(data.get("title") or ""),
+                    "state": state,
+                    "verification_status": verification_status,
+                    "local_completion_gate": local_gate,
+                    "promotion_gate_open": promoted,
+                    "blocked": blocked,
+                    "gate_reason": reason,
+                    "test_result_id": test_result_id,
+                    "verified_at": str(data.get("verified_at") or ""),
+                }
+            )
+
+        rows.sort(key=lambda item: str(item.get("verified_at") or ""), reverse=True)
+        return {
+            "tasks": rows,
+            "counts": {
+                "promoted": len([row for row in rows if row.get("promotion_gate_open")]),
+                "blocked": len([row for row in rows if row.get("blocked")]),
+                "pending": len(
+                    [row for row in rows if row.get("local_completion_gate") and not row.get("promotion_gate_open") and not row.get("blocked")]
+                ),
+            },
+        }
+
+    def _build_freshness_conflict_projection(
+        self, *, nodes: list[dict[str, Any]], ttl_minutes: int, now_utc: datetime
+    ) -> dict[str, Any]:
+        stale_nodes = []
+        for node in nodes:
+            data = _node_data(node)
+            ts = _node_turn_timestamp(node)
+            age_minutes = max(0.0, (now_utc - ts).total_seconds() / 60.0)
+            fresh_until = _parse_iso_datetime(data.get("fresh_until"))
+            is_stale = bool(
+                (fresh_until and fresh_until < now_utc)
+                or (age_minutes > float(ttl_minutes) and not bool(node.get("validated")))
+            )
+            if not is_stale:
+                continue
+            stale_nodes.append(
+                {
+                    "node_id": str(node.get("node_id") or ""),
+                    "type": str(node.get("type") or ""),
+                    "summary": _node_summary_text(node),
+                    "trust_level": str(data.get("trust_level") or ("verified" if node.get("validated") else "unverified")),
+                    "version": str(data.get("version") or ""),
+                    "supersedes": str(data.get("supersedes") or ""),
+                    "ts_utc": ts.isoformat(),
+                    "age_minutes": round(age_minutes, 2),
+                    "fresh_until": fresh_until.isoformat() if fresh_until else "",
+                }
+            )
+
+        claims_by_task: dict[str, list[dict[str, Any]]] = {}
+        task_rows = {str(node.get("node_id") or ""): node for node in nodes if str(node.get("type")) == "Task"}
+        for node in nodes:
+            if str(node.get("type")) != "Claim":
+                continue
+            task_id = str(_node_data(node).get("task_id") or "")
+            if not task_id:
+                continue
+            claims_by_task.setdefault(task_id, []).append(node)
+        for items in claims_by_task.values():
+            items.sort(key=lambda node: _node_turn_timestamp(node).timestamp())
+
+        conflicts = []
+        for task_id, claims in claims_by_task.items():
+            agents = [str(_node_data(claim).get("agent_id") or "") for claim in claims]
+            unique_agents = sorted({agent for agent in agents if agent})
+            if len(unique_agents) <= 1:
+                continue
+            task_data = _node_data(task_rows.get(task_id, {}))
+            latest_claim = claims[-1] if claims else None
+            latest_agent = str(_node_data(latest_claim).get("agent_id") or "") if isinstance(latest_claim, dict) else ""
+            conflicts.append(
+                {
+                    "task_id": task_id,
+                    "agents": unique_agents,
+                    "claim_count": len(claims),
+                    "resolution_policy": "latest_claim_then_verified_completion",
+                    "resolved_to": str(task_data.get("completed_by") or task_data.get("assigned_to") or latest_agent or ""),
+                    "verification_status": str(task_data.get("verification_status") or ""),
+                }
+            )
+
+        stale_nodes.sort(key=lambda item: float(item.get("age_minutes") or 0), reverse=True)
+        return {
+            "ttl_minutes": ttl_minutes,
+            "stale_nodes": stale_nodes,
+            "conflicts": conflicts,
+            "counts": {"stale_nodes": len(stale_nodes), "conflicts": len(conflicts)},
+        }
+
+    def _handle_session_glass_case(self, *, session_id: str, query: dict[str, list[str]]) -> None:
+        limit = _parse_limit(query) or 200
+        ttl_raw = (query.get("ttl_minutes") or [""])[0].strip()
+        ttl_minutes = (
+            _coerce_int(ttl_raw, field="ttl_minutes", minimum=1) if ttl_raw else GLASS_CASE_DEFAULT_TTL_MINUTES
+        )
+
+        now_utc = datetime.now(timezone.utc)
+        nodes, edges = self._load_session_graph(session_id=session_id)
+        nodes_sorted = sorted(nodes, key=lambda node: _node_turn_timestamp(node).timestamp())
+        limited_nodes = nodes_sorted[-limit:]
+
+        projections = {
+            "runtime_timeline": self._build_runtime_timeline(nodes=limited_nodes, edges=edges, limit=limit),
+            "ontology": self._build_ontology_projection(),
+            "coordination": self._build_coordination_projection(nodes=limited_nodes, now_utc=now_utc),
+            "tool_access_matrix": self._build_tool_access_matrix_projection(),
+            "receipts_artifacts": self._build_receipts_artifacts_projection(nodes=limited_nodes, edges=edges),
+            "verification_gates": self._build_verification_gates_projection(nodes=limited_nodes),
+            "freshness_conflicts": self._build_freshness_conflict_projection(
+                nodes=limited_nodes, ttl_minutes=ttl_minutes, now_utc=now_utc
+            ),
+        }
+
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "session_id": session_id,
+                "limit": limit,
+                "ttl_minutes": ttl_minutes,
+                "generated_at": now_utc.isoformat(),
+                "counts": {"nodes": len(limited_nodes), "edges": len(edges)},
+                "projections": projections,
             },
         )
 

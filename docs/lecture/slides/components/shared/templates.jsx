@@ -6,9 +6,6 @@ export const PrimitiveExplainerSlide = ({ primitiveLabel, definition, mentalMode
     <h2 className="text-[clamp(2.2rem,3.2vw,4.2rem)] font-bold mb-[2.5%] text-indigo-600 uppercase tracking-widest text-center">
       Primitive: {primitiveLabel}
     </h2>
-    <p className="text-[clamp(1.3rem,1.9vw,2.1rem)] font-medium text-slate-600 text-center mb-[3%]">
-      Definition + familiar mental model
-    </p>
     <div className="flex flex-1 gap-[3%] min-h-0">
       <div className="flex-1 bg-white/80 border border-slate-200 rounded-[1.2vw] p-[3%] shadow-sm flex flex-col">
         <p className="text-[clamp(1.1rem,1.5vw,1.8rem)] font-bold text-slate-500 uppercase tracking-[0.12em] mb-[2%]">Definition</p>

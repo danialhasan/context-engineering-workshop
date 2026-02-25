@@ -43,10 +43,10 @@ import {
 const Slide59WorkshopMapping = () => (
   <BaseSlide containerClassName="items-center justify-center" panelClassName="w-[95%] h-[85%]">
     <h2 className="text-[clamp(2.2rem,3.2vw,4.2rem)] font-bold mb-[2.2%] text-indigo-600 uppercase tracking-widest text-center">
-      What You&apos;ll Implement
+      What You&apos;ll Explore
     </h2>
     <p className="text-[clamp(1.3rem,1.9vw,2.1rem)] font-medium text-slate-600 text-center mb-[3%]">
-      Concrete swarm mechanics mapped to this workshop stack.
+      Concrete swarm mechanics to inspect, mutate, and test in this workshop stack.
     </p>
     <div className="grid grid-cols-2 gap-[2.2%] flex-1">
       {[

@@ -10,6 +10,7 @@ inputs_schema:
     task_id: {type: string}
     agent_id: {type: string}
     claim_state: {type: string}
+    lease_seconds: {type: integer}
 outputs_schema:
   type: object
   required: [claim_id, task_id, receipt_id]
@@ -17,9 +18,10 @@ outputs_schema:
     claim_id: {type: string}
     task_id: {type: string}
     receipt_id: {type: string}
+    lease_expires_at: {type: string}
 example_payload:
   run_id: run-demo
   task_id: node-task-001
   agent_id: worker-a
   claim_state: claimed
-
+  lease_seconds: 900
