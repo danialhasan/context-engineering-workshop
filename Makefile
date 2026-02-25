@@ -55,6 +55,7 @@ bedrock-harness:
 		--temperature $${TEMPERATURE:-0.0}
 
 gui:
+	npm run gui:build
 	$(PYTHON) -m src.tools.harness_gui_server --port $${GUI_PORT:-8765}
 
 clean:

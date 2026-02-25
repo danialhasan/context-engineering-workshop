@@ -6,6 +6,7 @@ import argparse
 import json
 import mimetypes
 import os
+import re
 from datetime import datetime, timezone
 from decimal import Decimal
 from http import HTTPStatus
@@ -25,6 +26,45 @@ from src.orchestrator.bedrock_harness import (
 HOST = "127.0.0.1"
 ALLOWED_PHASES = {"PLAN", "ACT", "VERIFY"}
 DEFAULT_STATIC_ROOT = Path(__file__).resolve().parents[2] / "docs" / "workshop" / "gui"
+CHAT_SPEC_MAX_ELEMENTS = 96
+CHAT_SPEC_MAX_CHILDREN = 32
+CHAT_SPEC_MAX_EVENT_ITEMS = 80
+CHAT_SPEC_MAX_GRAPH_ITEMS = 120
+CHAT_ALLOWED_COMPONENTS: dict[str, dict[str, Any]] = {
+    "Stack": {"props": {}},
+    "DashboardGrid": {"props": {}},
+    "Panel": {"props": {"title": "string", "subtitle": "string|null", "span": "'1'|'2'|null"}},
+    "RunSummary": {
+        "props": {
+            "status": "string",
+            "steps": "string",
+            "requestStatus": "string",
+            "finalResponse": "string",
+        }
+    },
+    "EventList": {
+        "props": {
+            "emptyLabel": "string",
+            "items": "[{title:string,meta:string,body:string,tone:'default'|'ok'|'error'|null}]",
+        }
+    },
+    "GraphStats": {"props": {"nodeCount": "string", "edgeCount": "string", "updatedAt": "string"}},
+    "GraphView": {"props": {"nodes": "[object]", "edges": "[object]"}},
+    "JsonBlock": {"props": {"label": "string", "value": "any"}},
+}
+DEFAULT_CHAT_SYSTEM_PROMPT = (
+    "You are the workshop chat+ui assistant.\n"
+    "Return ONLY a single JSON object with this exact shape:\n"
+    '{"assistant_text":"<string>","ui":{"mode":"none|spec","reason":"<string>","spec":<object|null>}}\n'
+    "Rules:\n"
+    "- Never output markdown fences, prose wrappers, or extra keys.\n"
+    "- If ui.mode='none', set ui.spec=null and provide ui.reason.\n"
+    "- If ui.mode='spec', provide a valid json-render spec with top-level keys: root, elements, optional state.\n"
+    "- Use ONLY allowed component types and prop contracts from this catalog JSON:\n"
+    f"{json.dumps(CHAT_ALLOWED_COMPONENTS, sort_keys=True)}\n"
+    "- Prefer concise specs. Do not exceed 80 elements.\n"
+    "- If unsure, choose ui.mode='none'."
+)
 
 
 class APIError(Exception):
@@ -164,6 +204,398 @@ def _parse_limit(query: dict[str, list[str]]) -> int | None:
     return _coerce_int(raw, field="limit", minimum=1)
 
 
+def _resolve_run_id(payload: dict[str, Any], *, field_hint: str) -> str:
+    run_id = str(
+        payload.get("run_id")
+        or payload.get("session")
+        or payload.get("session_id")
+        or payload.get("id")
+        or ""
+    ).strip()
+    if not run_id:
+        raise APIError(
+            status=HTTPStatus.BAD_REQUEST,
+            code="missing_run_id",
+            message="Missing required field 'run_id'.",
+            hint=f"Set 'run_id' (or alias 'session') in {field_hint}.",
+        )
+    return run_id
+
+
+def _truncate_text(value: str, *, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    return value[: max_chars - 1].rstrip() + "..."
+
+
+def _parse_json_object_from_text(raw_text: str) -> tuple[dict[str, Any] | None, str | None]:
+    stripped = raw_text.strip()
+    if not stripped:
+        return None, "model_response_empty"
+
+    try:
+        direct = json.loads(stripped)
+        if isinstance(direct, dict):
+            return direct, None
+    except json.JSONDecodeError:
+        pass
+
+    # First pass: structured decode from the first parseable "{" position.
+    decoder = json.JSONDecoder()
+    for idx, char in enumerate(stripped):
+        if char != "{":
+            continue
+        try:
+            candidate, _ = decoder.raw_decode(stripped[idx:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            return candidate, "model_response_had_wrapping_text"
+
+    # Fallback: greedily strip code fences if present and retry.
+    fenced = re.sub(r"^```(?:json)?\s*|\s*```$", "", stripped, flags=re.IGNORECASE | re.MULTILINE).strip()
+    if fenced and fenced != stripped:
+        try:
+            candidate = json.loads(fenced)
+            if isinstance(candidate, dict):
+                return candidate, "model_response_was_fenced"
+        except json.JSONDecodeError:
+            pass
+
+    return None, "model_response_not_json_object"
+
+
+def _validate_ui_spec(spec: Any) -> tuple[bool, str | None]:
+    if not isinstance(spec, dict):
+        return False, "ui.spec must be a JSON object."
+
+    top_level_allowed = {"root", "elements", "state"}
+    extra_top = set(spec.keys()) - top_level_allowed
+    if extra_top:
+        return False, f"ui.spec contains unsupported top-level keys: {sorted(extra_top)}."
+
+    root = spec.get("root")
+    if not isinstance(root, str) or not root.strip():
+        return False, "ui.spec.root must be a non-empty string."
+
+    elements = spec.get("elements")
+    if not isinstance(elements, dict) or not elements:
+        return False, "ui.spec.elements must be a non-empty object."
+
+    if len(elements) > CHAT_SPEC_MAX_ELEMENTS:
+        return False, f"ui.spec.elements exceeds max size ({CHAT_SPEC_MAX_ELEMENTS})."
+
+    if root not in elements:
+        return False, "ui.spec.root must reference an existing element id."
+
+    element_allowed_keys = {"type", "props", "children", "visible"}
+    for element_id, element in elements.items():
+        if not isinstance(element_id, str) or not element_id.strip():
+            return False, "Each element key must be a non-empty string."
+        if not isinstance(element, dict):
+            return False, f"Element '{element_id}' must be an object."
+
+        extra_element_keys = set(element.keys()) - element_allowed_keys
+        if extra_element_keys:
+            return False, f"Element '{element_id}' has unsupported keys: {sorted(extra_element_keys)}."
+
+        component_name = element.get("type")
+        if not isinstance(component_name, str) or component_name not in CHAT_ALLOWED_COMPONENTS:
+            return False, f"Element '{element_id}' uses unsupported component '{component_name}'."
+
+        props = element.get("props")
+        if not isinstance(props, dict):
+            return False, f"Element '{element_id}' props must be an object."
+
+        is_valid, reason = _validate_component_props(component_name, props)
+        if not is_valid:
+            return False, f"Element '{element_id}' invalid props: {reason}"
+
+        children = element.get("children", [])
+        if children is None:
+            children = []
+        if not isinstance(children, list):
+            return False, f"Element '{element_id}' children must be a list."
+        if len(children) > CHAT_SPEC_MAX_CHILDREN:
+            return False, (
+                f"Element '{element_id}' children exceeds max size ({CHAT_SPEC_MAX_CHILDREN})."
+            )
+        for child in children:
+            if not isinstance(child, str) or not child.strip():
+                return False, f"Element '{element_id}' contains invalid child reference."
+            if child not in elements:
+                return False, f"Element '{element_id}' references unknown child '{child}'."
+
+    return True, None
+
+
+def _validate_component_props(component_name: str, props: dict[str, Any]) -> tuple[bool, str | None]:
+    def require_keys(required: set[str]) -> tuple[bool, str | None]:
+        missing = sorted(required - set(props.keys()))
+        if missing:
+            return False, f"missing required keys {missing}"
+        return True, None
+
+    def reject_extra(allowed: set[str]) -> tuple[bool, str | None]:
+        extra = sorted(set(props.keys()) - allowed)
+        if extra:
+            return False, f"unsupported keys {extra}"
+        return True, None
+
+    def expect_string(key: str, *, allow_none: bool = False, max_chars: int = 4000) -> tuple[bool, str | None]:
+        value = props.get(key)
+        if value is None and allow_none:
+            return True, None
+        if not isinstance(value, str):
+            return False, f"'{key}' must be a string"
+        if len(value) > max_chars:
+            return False, f"'{key}' exceeds {max_chars} chars"
+        return True, None
+
+    if component_name in {"Stack", "DashboardGrid"}:
+        if props:
+            return False, "must not define props"
+        return True, None
+
+    if component_name == "Panel":
+        ok, reason = require_keys({"title"})
+        if not ok:
+            return ok, reason
+        ok, reason = reject_extra({"title", "subtitle", "span"})
+        if not ok:
+            return ok, reason
+        ok, reason = expect_string("title", max_chars=240)
+        if not ok:
+            return ok, reason
+        ok, reason = expect_string("subtitle", allow_none=True, max_chars=500)
+        if not ok:
+            return ok, reason
+        span = props.get("span")
+        if span not in {None, "1", "2"}:
+            return False, "'span' must be '1', '2', or null"
+        return True, None
+
+    if component_name == "RunSummary":
+        ok, reason = require_keys({"status", "steps", "requestStatus", "finalResponse"})
+        if not ok:
+            return ok, reason
+        ok, reason = reject_extra({"status", "steps", "requestStatus", "finalResponse"})
+        if not ok:
+            return ok, reason
+        for key in ("status", "steps", "requestStatus", "finalResponse"):
+            ok, reason = expect_string(key, max_chars=6000)
+            if not ok:
+                return ok, reason
+        return True, None
+
+    if component_name == "EventList":
+        ok, reason = require_keys({"emptyLabel", "items"})
+        if not ok:
+            return ok, reason
+        ok, reason = reject_extra({"emptyLabel", "items"})
+        if not ok:
+            return ok, reason
+        ok, reason = expect_string("emptyLabel", max_chars=400)
+        if not ok:
+            return ok, reason
+        items = props.get("items")
+        if not isinstance(items, list):
+            return False, "'items' must be a list"
+        if len(items) > CHAT_SPEC_MAX_EVENT_ITEMS:
+            return False, f"'items' exceeds {CHAT_SPEC_MAX_EVENT_ITEMS}"
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict):
+                return False, f"item {idx} must be an object"
+            required_item_keys = {"title", "meta", "body"}
+            missing_item = required_item_keys - set(item.keys())
+            if missing_item:
+                return False, f"item {idx} missing keys {sorted(missing_item)}"
+            extra_item = set(item.keys()) - {"title", "meta", "body", "tone"}
+            if extra_item:
+                return False, f"item {idx} has unsupported keys {sorted(extra_item)}"
+            for key in ("title", "meta", "body"):
+                value = item.get(key)
+                if not isinstance(value, str):
+                    return False, f"item {idx} '{key}' must be a string"
+                if len(value) > 4000:
+                    return False, f"item {idx} '{key}' exceeds 4000 chars"
+            tone = item.get("tone")
+            if tone not in {None, "default", "ok", "error"}:
+                return False, f"item {idx} 'tone' must be default|ok|error|null"
+        return True, None
+
+    if component_name == "GraphStats":
+        ok, reason = require_keys({"nodeCount", "edgeCount", "updatedAt"})
+        if not ok:
+            return ok, reason
+        ok, reason = reject_extra({"nodeCount", "edgeCount", "updatedAt"})
+        if not ok:
+            return ok, reason
+        for key in ("nodeCount", "edgeCount", "updatedAt"):
+            ok, reason = expect_string(key, max_chars=200)
+            if not ok:
+                return ok, reason
+        return True, None
+
+    if component_name == "GraphView":
+        ok, reason = require_keys({"nodes", "edges"})
+        if not ok:
+            return ok, reason
+        ok, reason = reject_extra({"nodes", "edges"})
+        if not ok:
+            return ok, reason
+        nodes = props.get("nodes")
+        edges = props.get("edges")
+        if not isinstance(nodes, list) or not all(isinstance(item, dict) for item in nodes):
+            return False, "'nodes' must be a list of objects"
+        if not isinstance(edges, list) or not all(isinstance(item, dict) for item in edges):
+            return False, "'edges' must be a list of objects"
+        if len(nodes) > CHAT_SPEC_MAX_GRAPH_ITEMS or len(edges) > CHAT_SPEC_MAX_GRAPH_ITEMS:
+            return (
+                False,
+                f"'nodes' and 'edges' must each be <= {CHAT_SPEC_MAX_GRAPH_ITEMS}",
+            )
+        return True, None
+
+    if component_name == "JsonBlock":
+        ok, reason = require_keys({"label", "value"})
+        if not ok:
+            return ok, reason
+        ok, reason = reject_extra({"label", "value"})
+        if not ok:
+            return ok, reason
+        ok, reason = expect_string("label", max_chars=240)
+        if not ok:
+            return ok, reason
+        return True, None
+
+    return False, f"unknown component '{component_name}'"
+
+
+def _normalize_chat_request(payload: dict[str, Any]) -> dict[str, Any]:
+    run_id = _resolve_run_id(payload, field_hint="/api/chat")
+    message = payload.get("message")
+    if not isinstance(message, str) or not message.strip():
+        raise APIError(
+            status=HTTPStatus.BAD_REQUEST,
+            code="missing_message",
+            message="Missing required field 'message'.",
+            hint="Provide a non-empty chat message.",
+        )
+
+    request: dict[str, Any] = {
+        "run_id": run_id,
+        "phase": _parse_phase(payload.get("phase"), default="PLAN"),
+        "session_key": str(payload.get("session_key") or "chat-main").strip() or "chat-main",
+        "message": message.strip(),
+        "max_tokens": _coerce_int(payload.get("max_tokens", 900), field="max_tokens", minimum=1),
+        "max_history_turns": _coerce_int(
+            payload.get("max_history_turns", 12), field="max_history_turns", minimum=0
+        ),
+        "temperature": _coerce_float(payload.get("temperature", 0.15), field="temperature"),
+        "reset_session": _coerce_bool(payload.get("reset_session"), field="reset_session")
+        if "reset_session" in payload
+        else False,
+    }
+    model_id_raw = payload.get("model_id")
+    if isinstance(model_id_raw, str) and model_id_raw.strip():
+        request["model_id"] = model_id_raw.strip()
+    system_prompt_raw = payload.get("system_prompt")
+    if isinstance(system_prompt_raw, str) and system_prompt_raw.strip():
+        request["system_prompt"] = system_prompt_raw.strip()
+    else:
+        request["system_prompt"] = DEFAULT_CHAT_SYSTEM_PROMPT
+    return request
+
+
+def _build_chat_prompt(request: dict[str, Any]) -> str:
+    return (
+        "Generate a response for this workshop chat turn.\n"
+        f"run_id: {request['run_id']}\n"
+        f"phase: {request['phase']}\n"
+        f"session_key: {request['session_key']}\n"
+        "User message:\n"
+        f"{request['message']}\n\n"
+        "Return the strict JSON envelope now."
+    )
+
+
+def _extract_user_message_from_prompt(prompt: str) -> str:
+    text = prompt.strip()
+    if not text:
+        return ""
+    marker = "User message:\n"
+    if marker not in text:
+        return text
+    after = text.split(marker, 1)[1]
+    tail = "\n\nReturn the strict JSON envelope now."
+    if tail in after:
+        return after.split(tail, 1)[0].strip()
+    return after.strip()
+
+
+def _parse_chat_model_output(raw_model_text: str) -> dict[str, Any]:
+    candidate, parse_note = _parse_json_object_from_text(raw_model_text)
+    parse_ok = isinstance(candidate, dict)
+
+    assistant_text = _truncate_text(raw_model_text.strip(), max_chars=6000)
+    ui_mode = "none"
+    ui_reason = "Model output could not be parsed as contract JSON."
+    ui_spec: dict[str, Any] | None = None
+    ui_validate_ok = False
+    ui_rejection_reason = parse_note or "model_response_not_json_object"
+
+    if parse_ok and candidate is not None:
+        candidate_text = candidate.get("assistant_text")
+        if isinstance(candidate_text, str) and candidate_text.strip():
+            assistant_text = _truncate_text(candidate_text.strip(), max_chars=6000)
+
+        ui_raw = candidate.get("ui")
+        if isinstance(ui_raw, dict):
+            requested_mode = str(ui_raw.get("mode") or "none").strip().lower()
+            requested_reason = ui_raw.get("reason")
+            requested_reason_text = str(requested_reason).strip() if isinstance(requested_reason, str) else ""
+            if requested_mode == "spec":
+                is_valid, reason = _validate_ui_spec(ui_raw.get("spec"))
+                if is_valid:
+                    ui_mode = "spec"
+                    ui_reason = requested_reason_text or "Model selected structured UI rendering."
+                    ui_spec = ui_raw.get("spec")
+                    ui_validate_ok = True
+                    ui_rejection_reason = ""
+                else:
+                    ui_mode = "none"
+                    ui_reason = requested_reason_text or "Invalid ui.spec; falling back to text."
+                    ui_spec = None
+                    ui_validate_ok = False
+                    ui_rejection_reason = reason or "ui_spec_validation_failed"
+            else:
+                ui_mode = "none"
+                ui_reason = requested_reason_text or "Model selected text-only response."
+                ui_spec = None
+                ui_validate_ok = True
+                ui_rejection_reason = ""
+        else:
+            ui_mode = "none"
+            ui_reason = "Contract JSON missing 'ui' object; rendering text only."
+            ui_spec = None
+            ui_validate_ok = False
+            ui_rejection_reason = "missing_ui_object"
+
+    return {
+        "assistant_text": assistant_text or "No assistant text returned.",
+        "ui": {
+            "mode": ui_mode,
+            "reason": ui_reason,
+            "spec": ui_spec,
+        },
+        "ui_parse_ok": parse_ok,
+        "ui_validate_ok": ui_validate_ok,
+        "ui_rendered": ui_mode == "spec" and ui_spec is not None,
+        "ui_rejection_reason": ui_rejection_reason,
+    }
+
+
 def _node_data(node: dict[str, Any]) -> dict[str, Any]:
     data = node.get("data")
     return data if isinstance(data, dict) else {}
@@ -188,6 +620,14 @@ def _node_turn_timestamp(node: dict[str, Any]) -> datetime:
         except ValueError:
             continue
     return datetime.fromtimestamp(0, tz=timezone.utc)
+
+
+def _node_turn_index(node: dict[str, Any]) -> int:
+    raw_value = _node_data(node).get("turn_index", 0)
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _parse_harness_config(payload: dict[str, Any]) -> BedrockHarnessConfig:
@@ -327,6 +767,9 @@ class HarnessGUIHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/harness/run":
                 self._handle_harness_run()
                 return
+            if parsed.path == "/api/chat":
+                self._handle_chat()
+                return
             if parsed.path == "/api/skill/run":
                 self._handle_skill_run()
                 return
@@ -334,7 +777,7 @@ class HarnessGUIHandler(BaseHTTPRequestHandler):
                 status=HTTPStatus.NOT_FOUND,
                 code="route_not_found",
                 message=f"Unknown API route '{parsed.path}'.",
-                hint="Use /api/harness/run or /api/skill/run.",
+                hint="Use /api/harness/run, /api/chat, or /api/skill/run.",
             )
         except APIError as exc:
             self._send_json(exc.status, _error_payload(exc))
@@ -434,29 +877,38 @@ class HarnessGUIHandler(BaseHTTPRequestHandler):
             )
             return
 
-        session_id, resource = self._parse_session_route(path)
-        if resource == "graph":
+        session_id, resource_parts = self._parse_session_route(path)
+        if resource_parts == ["graph"]:
             self._handle_session_graph(session_id=session_id, query=query)
             return
-        if resource == "memory":
+        if resource_parts == ["memory"]:
             self._handle_session_memory(session_id=session_id, query=query)
+            return
+        if len(resource_parts) >= 1 and resource_parts[0] == "chat":
+            self._handle_session_chat(session_id=session_id, resource_parts=resource_parts[1:], query=query)
             return
 
         raise APIError(
             status=HTTPStatus.NOT_FOUND,
             code="route_not_found",
             message=f"Unknown session route '{path}'.",
-            hint="Use /api/session/{session_id}/graph or /api/session/{session_id}/memory.",
+            hint=(
+                "Use /api/session/{session_id}/graph, /api/session/{session_id}/memory, "
+                "or /api/session/{session_id}/chat/threads."
+            ),
         )
 
-    def _parse_session_route(self, path: str) -> tuple[str, str]:
+    def _parse_session_route(self, path: str) -> tuple[str, list[str]]:
         parts = [part for part in path.split("/") if part]
-        if len(parts) != 4 or parts[0] != "api" or parts[1] != "session":
+        if len(parts) < 4 or parts[0] != "api" or parts[1] != "session":
             raise APIError(
                 status=HTTPStatus.NOT_FOUND,
                 code="route_not_found",
                 message=f"Unknown API route '{path}'.",
-                hint="Use /api/health, /api/session/{session_id}/graph, or /api/session/{session_id}/memory.",
+                hint=(
+                    "Use /api/health, /api/session/{session_id}/graph, "
+                    "/api/session/{session_id}/memory, or /api/session/{session_id}/chat/threads."
+                ),
             )
         session_id = unquote(parts[2]).strip()
         if not session_id:
@@ -466,7 +918,7 @@ class HarnessGUIHandler(BaseHTTPRequestHandler):
                 message="Session id is required in the route.",
                 hint="Call /api/session/{session_id}/...",
             )
-        return session_id, parts[3]
+        return session_id, parts[3:]
 
     def _handle_session_graph(self, *, session_id: str, query: dict[str, list[str]]) -> None:
         limit = _parse_limit(query)
@@ -515,7 +967,7 @@ class HarnessGUIHandler(BaseHTTPRequestHandler):
 
         memory_nodes.sort(
             key=lambda node: (
-                int(_node_data(node).get("turn_index", 0)),
+                _node_turn_index(node),
                 _node_turn_timestamp(node).timestamp(),
             )
         )
@@ -531,12 +983,243 @@ class HarnessGUIHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _list_bedrock_turn_nodes(
+        self, *, session_id: str, session_key: str | None = None
+    ) -> list[dict[str, Any]]:
+        # TODO: replace session scan with indexed lookup when chat history volume grows.
+        graph_store = GraphStore()
+        nodes = list(graph_store.list_session(session_id).get("nodes", []))
+        turns: list[dict[str, Any]] = []
+        for node in nodes:
+            if str(node.get("type")) != "Decision":
+                continue
+            data = _node_data(node)
+            if str(data.get("kind") or "") != "bedrock_turn":
+                continue
+            key = str(data.get("session_key") or "default")
+            if session_key is not None and key != session_key:
+                continue
+            turns.append(node)
+
+        turns.sort(
+            key=lambda node: (
+                str(_node_data(node).get("session_key") or "default"),
+                _node_turn_index(node),
+                _node_turn_timestamp(node).timestamp(),
+            )
+        )
+        return turns
+
+    def _handle_session_chat(
+        self, *, session_id: str, resource_parts: list[str], query: dict[str, list[str]]
+    ) -> None:
+        if not resource_parts or resource_parts == ["threads"]:
+            self._handle_session_chat_threads(session_id=session_id)
+            return
+        if resource_parts == ["history"] or resource_parts == ["turns"]:
+            self._handle_session_chat_history(session_id=session_id, query=query)
+            return
+
+        suffix = "/".join(resource_parts)
+        raise APIError(
+            status=HTTPStatus.NOT_FOUND,
+            code="route_not_found",
+            message=f"Unknown chat route '/api/session/{session_id}/chat/{suffix}'.",
+            hint="Use /api/session/{session_id}/chat/threads or /api/session/{session_id}/chat/history.",
+        )
+
+    def _handle_session_chat_threads(self, *, session_id: str) -> None:
+        turns = self._list_bedrock_turn_nodes(session_id=session_id)
+        buckets: dict[str, dict[str, Any]] = {}
+        for node in turns:
+            data = _node_data(node)
+            session_key = str(data.get("session_key") or "default")
+            bucket = buckets.get(session_key)
+            if bucket is None:
+                bucket = {
+                    "session_key": session_key,
+                    "turn_count": 0,
+                    "last_turn_index": 0,
+                    "last_turn_at": "",
+                    "first_user_message": "",
+                    "last_user_message": "",
+                    "last_assistant_text": "",
+                    "_last_epoch": 0.0,
+                }
+                buckets[session_key] = bucket
+
+            user_message = _extract_user_message_from_prompt(str(data.get("prompt") or ""))
+            raw_model_text = str(data.get("response") or "")
+            parsed = _parse_chat_model_output(raw_model_text)
+            assistant_text = str(parsed.get("assistant_text") or raw_model_text).strip()
+            turn_index = _node_turn_index(node)
+            turn_time = _node_turn_timestamp(node)
+            turn_time_iso = turn_time.isoformat()
+
+            bucket["turn_count"] = int(bucket["turn_count"]) + 1
+            if not bucket["first_user_message"] and user_message:
+                bucket["first_user_message"] = _truncate_text(user_message, max_chars=240)
+
+            if turn_time.timestamp() >= float(bucket["_last_epoch"]):
+                bucket["_last_epoch"] = turn_time.timestamp()
+                bucket["last_turn_index"] = turn_index
+                bucket["last_turn_at"] = turn_time_iso
+                bucket["last_user_message"] = _truncate_text(user_message, max_chars=240)
+                bucket["last_assistant_text"] = _truncate_text(assistant_text, max_chars=240)
+
+        threads = []
+        for bucket in buckets.values():
+            first_user = str(bucket.get("first_user_message") or "").strip()
+            title = _truncate_text(first_user, max_chars=80) if first_user else f"Conversation {bucket['session_key']}"
+            last_user = str(bucket.get("last_user_message") or "").strip()
+            last_assistant = str(bucket.get("last_assistant_text") or "").strip()
+            preview_source = last_user or last_assistant or title
+            threads.append(
+                {
+                    "session_key": bucket["session_key"],
+                    "title": title,
+                    "preview": _truncate_text(preview_source, max_chars=120),
+                    "turn_count": int(bucket["turn_count"]),
+                    "last_turn_index": int(bucket["last_turn_index"]),
+                    "last_turn_at": str(bucket["last_turn_at"]),
+                    "first_user_message": first_user,
+                    "last_user_message": last_user,
+                    "last_assistant_text": last_assistant,
+                }
+            )
+
+        threads.sort(key=lambda item: str(item.get("last_turn_at") or ""), reverse=True)
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "session_id": session_id,
+                "threads": threads,
+                "count": len(threads),
+            },
+        )
+
+    def _handle_session_chat_history(self, *, session_id: str, query: dict[str, list[str]]) -> None:
+        session_key = (query.get("session_key") or [""])[0].strip()
+        if not session_key:
+            raise APIError(
+                status=HTTPStatus.BAD_REQUEST,
+                code="missing_session_key",
+                message="Query parameter 'session_key' is required.",
+                hint="Call /api/session/{session_id}/chat/history?session_key=your-key.",
+            )
+
+        limit = _parse_limit(query)
+        turns = self._list_bedrock_turn_nodes(session_id=session_id, session_key=session_key)
+        turns.sort(key=lambda node: (_node_turn_index(node), _node_turn_timestamp(node).timestamp()))
+        if limit is not None:
+            turns = turns[-limit:]
+
+        history_items = []
+        for node in turns:
+            data = _node_data(node)
+            raw_model_text = str(data.get("response") or "")
+            parsed = _parse_chat_model_output(raw_model_text)
+            history_items.append(
+                {
+                    "node_id": str(node.get("node_id") or ""),
+                    "turn_index": _node_turn_index(node),
+                    "ts_utc": str(data.get("ts_utc") or node.get("updated_at") or node.get("created_at") or ""),
+                    "model_id": str(data.get("model_id") or ""),
+                    "history_turns_used": int(data.get("history_turns_used") or 0),
+                    "phase": str(data.get("phase") or ""),
+                    "user_message": _extract_user_message_from_prompt(str(data.get("prompt") or "")),
+                    "raw_model_text": raw_model_text,
+                    "assistant_text": parsed["assistant_text"],
+                    "ui": parsed["ui"],
+                    "ui_parse_ok": bool(parsed["ui_parse_ok"]),
+                    "ui_validate_ok": bool(parsed["ui_validate_ok"]),
+                    "ui_rendered": bool(parsed["ui_rendered"]),
+                    "ui_rejection_reason": str(parsed["ui_rejection_reason"] or ""),
+                }
+            )
+
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "session_id": session_id,
+                "session_key": session_key,
+                "turns": history_items,
+                "count": len(history_items),
+            },
+        )
+
     def _handle_harness_run(self) -> None:
         payload = self._read_json_body()
         config = _parse_harness_config(payload)
         # TODO: swap in-process execution for a background runner when remote orchestration is wired.
         result = run_bedrock_harness(config)
         self._send_json(HTTPStatus.OK, result)
+
+    def _handle_chat(self) -> None:
+        payload = self._read_json_body()
+        request = _normalize_chat_request(payload)
+        infer_request: dict[str, Any] = {
+            "skill": "bedrock_infer",
+            "session": request["run_id"],
+            "phase": request["phase"],
+            "input": {
+                "run_id": request["run_id"],
+                "session_key": request["session_key"],
+                "prompt": _build_chat_prompt(request),
+                "system_prompt": request["system_prompt"],
+                "max_tokens": request["max_tokens"],
+                "max_history_turns": request["max_history_turns"],
+                "temperature": request["temperature"],
+                "reset_session": request["reset_session"],
+            },
+        }
+        if "model_id" in request:
+            infer_request["input"]["model_id"] = request["model_id"]
+
+        try:
+            infer_result = aws_tool_handle_request(infer_request)
+        except Exception as exc:
+            raise APIError(
+                status=HTTPStatus.BAD_GATEWAY,
+                code="chat_inference_failed",
+                message=f"Chat inference failed: {exc}",
+                hint="Check AWS credentials/model access and retry, or switch to CEW_MOCK_AWS=1.",
+            ) from exc
+
+        output = infer_result.get("output")
+        if not isinstance(output, dict):
+            raise APIError(
+                status=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="chat_inference_output_invalid",
+                message="bedrock_infer output was not a JSON object.",
+                hint="Inspect bedrock_infer skill output shape.",
+            )
+
+        raw_model_text = str(output.get("text") or "")
+        parsed = _parse_chat_model_output(raw_model_text)
+
+        response_payload: dict[str, Any] = {
+            "ok": True,
+            "run_id": request["run_id"],
+            "phase": request["phase"],
+            "session_key": request["session_key"],
+            "assistant_text": parsed["assistant_text"],
+            "ui": parsed["ui"],
+            "ui_parse_ok": bool(parsed["ui_parse_ok"]),
+            "ui_validate_ok": bool(parsed["ui_validate_ok"]),
+            "ui_rendered": bool(parsed["ui_rendered"]),
+            "ui_rejection_reason": str(parsed["ui_rejection_reason"] or ""),
+            "raw_model_text": raw_model_text,
+            "model_id": output.get("model_id"),
+            "turn_index": output.get("turn_index"),
+            "history_turns_used": output.get("history_turns_used"),
+            "saved_memory": bool(output.get("saved_memory")),
+            "receipt_id": output.get("receipt_id"),
+            "provenance": output.get("provenance"),
+        }
+        self._send_json(HTTPStatus.OK, response_payload)
 
     def _handle_skill_run(self) -> None:
         payload = self._read_json_body()

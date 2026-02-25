@@ -258,11 +258,19 @@ Bedrock-first harness loop (tool-calling controller):
 make bedrock-harness SESSION="$SESSION" GOAL="Call resolve_identity, then summarize result."
 ```
 
-Local workshop GUI (basic visualization):
+Local workshop GUI (React 19 + json-render):
 
 ```bash
 make gui
 # open http://127.0.0.1:8765
+# open http://127.0.0.1:8765/component-registry
+# open http://127.0.0.1:8765/chat
+```
+
+Dev loop for GUI only:
+
+```bash
+npm run gui:dev
 ```
 
 The GUI shows:
@@ -270,7 +278,10 @@ The GUI shows:
 - run status + final response
 - Bedrock turn timeline and tool events
 - persisted session memory turns
-- session graph snapshot (nodes/edges + recent nodes)
+- session graph snapshot (nodes/edges + recent nodes + rendered graph view)
+- `/component-registry` route that showcases every json-render catalog component with demo data
+- `/chat` route with chat-style conversation threads persisted by `session + session_key` in DynamoDB-backed graph memory
+- conversation hydration via `GET /api/session/{session_id}/chat/threads` and `GET /api/session/{session_id}/chat/history`
 
 Notes:
 

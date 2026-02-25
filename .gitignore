@@ -36,3 +36,4 @@ context_pack_*.json
 node_modules/
 dist/
 .vite/
+tmp/

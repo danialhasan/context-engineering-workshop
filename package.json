@@ -6,13 +6,19 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "gui:dev": "vite --config docs/workshop/gui-react/vite.config.js",
+    "gui:build": "vite build --config docs/workshop/gui-react/vite.config.js",
+    "gui:preview": "vite preview --config docs/workshop/gui-react/vite.config.js"
   },
   "dependencies": {
+    "@json-render/core": "^0.10.0",
+    "@json-render/react": "^0.10.0",
     "hls.js": "^1.6.15",
     "lucide-react": "^0.575.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
