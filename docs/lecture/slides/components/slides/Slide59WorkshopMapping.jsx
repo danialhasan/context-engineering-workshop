@@ -41,11 +41,11 @@ import {
 } from '../shared';
 
 const Slide59WorkshopMapping = () => (
-  <BaseSlide containerClassName="items-center justify-center" panelClassName="w-[95%] h-[85%]">
-    <h2 className="text-[clamp(2.2rem,3.2vw,4.2rem)] font-bold mb-[2.2%] text-indigo-600 uppercase tracking-widest text-center">
+  <BaseSlide containerClassName="items-center justify-center" panelClassName="w-[95%] h-[87%]">
+    <h2 className="text-[clamp(2rem,3vw,4rem)] font-bold mb-[1.9%] text-indigo-600 uppercase tracking-widest text-center">
       What You&apos;ll Implement
     </h2>
-    <p className="text-[clamp(1.3rem,1.9vw,2.1rem)] font-medium text-slate-600 text-center mb-[3%]">
+    <p className="text-[clamp(1.1rem,1.55vw,1.85rem)] font-medium text-slate-600 text-center mb-[2.3%]">
       Concrete swarm mechanics mapped to this workshop stack.
     </p>
     <div className="grid grid-cols-2 gap-[2.2%] flex-1">
@@ -57,9 +57,9 @@ const Slide59WorkshopMapping = () => (
         ['Verification Gates', 'Promotion only with evidence'],
         ['Leases + Reassign', 'Timeout-safe coordination loop']
       ].map(([title, body]) => (
-        <div key={title} className="bg-white/80 border border-slate-200 rounded-[0.9vw] p-[3%] shadow-sm">
-          <p className="text-[clamp(1.05rem,1.35vw,1.6rem)] font-bold text-indigo-700 uppercase tracking-wider mb-[1.2%]">{title}</p>
-          <p className="text-[clamp(1.05rem,1.35vw,1.6rem)] font-semibold text-slate-700">{body}</p>
+        <div key={title} className="bg-white/80 border border-slate-200 rounded-[0.9vw] p-[2.4%] shadow-sm min-h-0">
+          <p className="text-[clamp(0.95rem,1.15vw,1.3rem)] font-bold text-indigo-700 uppercase tracking-wider mb-[0.9%]">{title}</p>
+          <p className="text-[clamp(0.98rem,1.18vw,1.3rem)] font-semibold text-slate-700 leading-snug">{body}</p>
         </div>
       ))}
     </div>
