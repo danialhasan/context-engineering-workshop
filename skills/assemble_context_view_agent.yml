@@ -1,0 +1,45 @@
+name: assemble_context_view_agent
+description: Build an agent-native context view with deterministic policy checks and budget guards.
+allowed_phases: [PLAN, VERIFY]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, task, phase, token_budget]
+  properties:
+    run_id: {type: string}
+    task: {type: string}
+    phase:
+      type: string
+      enum: [PLAN, ACT, VERIFY]
+    token_budget:
+      type: integer
+      minimum: 1
+    retrieval_hints:
+      type: object
+outputs_schema:
+  type: object
+  required: [selected_items, token_estimate, policy_checks, receipt_id]
+  properties:
+    selected_items:
+      type: array
+      items:
+        type: object
+        required: [id, type, selection_reason, token_estimate]
+        properties:
+          id: {type: string}
+          type: {type: string}
+          selection_reason: {type: string}
+          token_estimate: {type: integer}
+    token_estimate: {type: integer}
+    policy_checks: {type: object}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  task: Prepare context for latest verification summary
+  phase: PLAN
+  token_budget: 800
+  retrieval_hints:
+    query: verification evidence
+    types: [Receipt, TestResult, Task, Objective, Plan]
+    validated_only: false
+    limit: 40

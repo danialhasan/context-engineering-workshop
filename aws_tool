@@ -1,3 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-python3 -m src.aws_tool.cli "$@"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
+
+if [ -x "$VENV_PYTHON" ]; then
+  exec "$VENV_PYTHON" -m src.aws_tool.cli "$@"
+fi
+
+exec python3 -m src.aws_tool.cli "$@"

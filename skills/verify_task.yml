@@ -1,0 +1,28 @@
+name: verify_task
+description: Verify a task outcome against deterministic evidence and promote it if verified.
+allowed_phases: [VERIFY]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, task_id, check_type]
+  properties:
+    run_id: {type: string}
+    task_id: {type: string}
+    check_type:
+      type: string
+      enum: [s3_head_object, noop]
+    artifact_uri: {type: string}
+    notes: {type: string}
+outputs_schema:
+  type: object
+  required: [test_result_id, status, receipt_id]
+  properties:
+    test_result_id: {type: string}
+    status: {type: string}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  task_id: node-task-001
+  check_type: s3_head_object
+  artifact_uri: s3://bucket/prefix/artifact.txt
+

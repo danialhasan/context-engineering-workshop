@@ -402,3 +402,58 @@ what you say (speaker voice)
 callouts to the workshop checkpoint it enables
 
 Then, once you share your preferred Gemini slide style, I’ll convert that script into Gemini prompts that generate the deck in your style (and keep the deck strictly aligned to the workshop).
+
+## 9) Addendum: Problem-First Narrative Arc (Approved Direction)
+
+This addendum preserves the existing lecture and clarifies the sequencing we want for delivery.
+
+### A) Why this sequencing
+
+The lecture should first provide foundational context, then introduce the main problem, then introduce context engineering as the solution class.
+
+Only after that do we enter lab-specific research approaches.
+
+### B) Lecture progression (problem-first)
+
+1. Foundation:
+- what an agent is
+- model vs harness
+- common failure modes
+
+2. Root problem statement:
+- long-running agent systems must maintain high-signal, trustworthy, actionable context under finite attention, changing state, and tool-mediated execution.
+
+3. Solution class:
+- context engineering as systems engineering for attention and state quality.
+
+4. Research analysis:
+- each lab faces the same root problem
+- each lab solves a derivative of that problem based on operating constraints and goals
+
+5. Primitive synthesis:
+- take the five primitives and compare implementation differences across labs
+- explain why differences exist (constraints, scale, product goals, runtime assumptions)
+
+### C) Framing for the research section
+
+We are not presenting three unrelated papers.
+We are presenting one root problem and three operating environments that produce different solution emphases.
+
+### D) Primitive comparison lens (for each lab)
+
+For each lab, evaluate:
+- ontology assumptions (what entities/relations matter most)
+- memory structure choices (what is persisted, where, and why)
+- capability governance (tool contracts, stability, and gating)
+- context assembly strategy (retrieval, ranking, recitation, compaction)
+- verification model (what gets promoted to trusted state)
+
+### E) Why this matters for the workshop
+
+The workshop should mirror this structure:
+- initialize a harness scaffold
+- implement with coder agents
+- verify at multiple levels
+- observe how different constraints change primitive implementation choices
+
+This keeps the workshop aligned to research, not just command execution.

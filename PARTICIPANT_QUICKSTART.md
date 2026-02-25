@@ -1,6 +1,6 @@
 # Participant Quickstart
 
-Goal: get from login to a successful smoke run.
+Goal: get from login to an initialized harness, then implement and verify the coder step with your agent.
 
 ## 1) Login
 
@@ -12,6 +12,8 @@ Local terminal:
 CloudShell:
 - Open AWS Console -> CloudShell.
 - Credentials are pre-wired; do not run `aws configure` unless instructed.
+- Run `python3 --version` before continuing. This repo requires Python 3.10+.
+- If CloudShell reports Python lower than 3.10, switch to a local terminal with Python 3.10+.
 
 ## 2) Set Region (Required)
 
@@ -53,15 +55,70 @@ From repo root:
 
 ```bash
 make install
+make provision
 make doctor
-make smoke
+./aws_tool list-skills
 ```
 
 Expected:
+- `make install` creates/updates `.venv` and installs dependencies there.
 - `make doctor` prints `PASS: doctor checks complete`.
-- `make smoke` prints `SMOKE PASS` and a `session_id`.
+- `./aws_tool list-skills` shows the tool surface your agent will use.
 
-## 6) Top 10 Errors and Fixes
+## 6) Workshop Flow (Initializer -> Coder)
+
+Initializer step (provided scaffold):
+
+- You start from an initialized repo and infra gate (`install/provision/doctor`).
+- The ontology + storage + skill contracts already exist.
+- Your job is to use an agent to complete implementation TODOs with TDD and verification.
+
+Coder step (what you do):
+
+1. Create a session:
+
+```bash
+SESSION="cew-$(date +%s)"
+```
+
+2. Run the lifecycle once (`PLAN -> ACT -> VERIFY`) to establish baseline evidence:
+
+```bash
+./aws_tool run create_task --session "$SESSION" --phase PLAN --json "{\"run_id\":\"$SESSION\",\"title\":\"Implement TODO and verify\"}"
+./aws_tool run list_tasks --session "$SESSION" --phase PLAN --json "{\"run_id\":\"$SESSION\"}"
+# copy task_id
+./aws_tool run claim_task --session "$SESSION" --phase ACT --json "{\"run_id\":\"$SESSION\",\"task_id\":\"<task_id>\",\"agent_id\":\"coder-1\"}"
+./aws_tool run upload_artifact --session "$SESSION" --phase ACT --json "{\"run_id\":\"$SESSION\",\"name\":\"implementation-notes.txt\",\"content\":\"baseline evidence\"}"
+# copy s3_uri
+./aws_tool run complete_task --session "$SESSION" --phase ACT --json "{\"run_id\":\"$SESSION\",\"task_id\":\"<task_id>\",\"agent_id\":\"coder-1\",\"summary\":\"Implemented TODO path\",\"artifact_uri\":\"<s3_uri>\",\"status\":\"success\"}"
+./aws_tool run verify_task --session "$SESSION" --phase VERIFY --json "{\"run_id\":\"$SESSION\",\"task_id\":\"<task_id>\",\"check_type\":\"s3_head_object\",\"artifact_uri\":\"<s3_uri>\"}"
+```
+
+3. Run retrieval as agent-invoked context:
+
+```bash
+./aws_tool run search_nodes --session "$SESSION" --phase PLAN --json "{\"run_id\":\"$SESSION\",\"query\":\"verify\",\"limit\":5}"
+./aws_tool run neighbors --session "$SESSION" --phase VERIFY --json "{\"run_id\":\"$SESSION\",\"node_id\":\"<task_id>\",\"direction\":\"outbound\"}"
+```
+
+4. Optional control experiment (deterministic baseline):
+
+```bash
+make compile STRATEGY=recite SESSION="$SESSION" TASK="Summarize latest verified implementation state"
+```
+
+## 7) Verification Levels (Use all three)
+
+1. Level 1: tool/schema verification
+- Command shape + phase/tool gating + schema validation.
+
+2. Level 2: deterministic runtime verification
+- Read-backs, head-object checks, assertions, test commands.
+
+3. Level 3: behavioral/task verification
+- The task objective is met with linked receipts/artifacts and no unverified promotion.
+
+## 8) Top 10 Errors and Fixes
 
 1. `AccessDenied` on STS/DynamoDB/S3
 - Fix: ask facilitator/SA to attach workshop policy for `sts:GetCallerIdentity`, DynamoDB R/W on `GraphNodes`/`GraphEdges`, and S3 write on workshop bucket/prefix.
@@ -88,14 +145,13 @@ Expected:
 - Fix: refresh credentials (`aws sso login` or new temporary creds), then rerun `aws sts get-caller-identity`.
 
 7. Credential expiry mid-session
-- Fix: re-authenticate and rerun `make doctor` before retrying `make smoke`.
+- Fix: re-authenticate and rerun `make doctor` before retrying lifecycle commands.
 
 8. Throttling / transient AWS errors
 - Fix: wait 15-30 seconds, retry command. Reduce parallel retries if you scripted extra calls.
 
-9. `CEW_MOCK_AWS=1 is not allowed for real smoke`
-- Fix: run `unset CEW_MOCK_AWS` (or `export CEW_MOCK_AWS=0`) and rerun `make smoke`.
+9. `CEW_MOCK_AWS` points to the wrong mode
+- Fix: run `unset CEW_MOCK_AWS` (or `export CEW_MOCK_AWS=0`) for real AWS workshop flow.
 
-10. `aws` command or Python missing
-- Fix: install AWS CLI v2 and Python 3.10+, then rerun `make install`.
-
+10. `make install` fails before dependencies install
+- Fix: ensure `python3 --version` is 3.10+ and `python3 -m venv --help` works, then rerun `make install`.

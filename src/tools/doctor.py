@@ -95,7 +95,7 @@ def _check_graph_roundtrip(region: str) -> tuple[str, str]:
     except MissingTableError as exc:
         _fail(
             str(exc),
-            "Provision GraphNodes and GraphEdges in the workshop account and grant DynamoDB read/write permissions.",
+            "Run `make provision` to create GraphNodes/GraphEdges and an artifact bucket, then retry `make doctor`.",
         )
 
     session_id = f"doctor-{uuid.uuid4().hex[:8]}"
@@ -129,20 +129,32 @@ def _check_graph_roundtrip(region: str) -> tuple[str, str]:
 
 
 def _check_s3_write(region: str) -> tuple[str, str]:
-    bucket = os.getenv("CEW_ARTIFACT_BUCKET")
-    if not bucket:
+    try:
+        artifact_store = ArtifactStore(mock_mode=False, region_name=region)
+        bucket = artifact_store.bucket
+    except Exception as exc:
         _fail(
-            "CEW_ARTIFACT_BUCKET is not set.",
-            "Set artifact bucket name (example: `export CEW_ARTIFACT_BUCKET=cew-artifacts-<account>-<region>`).",
+            f"Could not initialize artifact store: {exc}",
+            "Verify AWS credentials + region, then run `make provision` and retry `make doctor`.",
         )
 
-    artifact_store = ArtifactStore(mock_mode=False, region_name=region)
+    if not bucket:
+        _fail(
+            "CEW_ARTIFACT_BUCKET is not set and could not be derived.",
+            "Run `make provision` (creates a default bucket) or set `CEW_ARTIFACT_BUCKET` manually, then retry.",
+        )
     session_id = f"doctor-{uuid.uuid4().hex[:8]}"
-    upload = artifact_store.upload_artifact(
-        session_id=session_id,
-        name="doctor-check.txt",
-        content_bytes=b"doctor-write-check\n",
-    )
+    try:
+        upload = artifact_store.upload_artifact(
+            session_id=session_id,
+            name="doctor-check.txt",
+            content_bytes=b"doctor-write-check\n",
+        )
+    except Exception as exc:
+        _fail(
+            f"S3 write check failed: {exc}",
+            "Run `make provision` and ensure permissions include `s3:PutObject` for the artifact bucket.",
+        )
 
     s3_uri = str(upload.get("s3_uri", ""))
     sha256 = str(upload.get("sha256", ""))

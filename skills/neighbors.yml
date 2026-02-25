@@ -1,0 +1,28 @@
+name: neighbors
+description: Traverse graph edges for a node (agent-invoked retrieval).
+allowed_phases: [PLAN, ACT, VERIFY]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, node_id]
+  properties:
+    run_id: {type: string}
+    node_id: {type: string}
+    direction:
+      type: string
+      enum: [outbound, inbound]
+    limit: {type: integer}
+outputs_schema:
+  type: object
+  required: [edges, receipt_id]
+  properties:
+    edges:
+      type: array
+      items: {type: object}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  node_id: node-abc123
+  direction: outbound
+  limit: 25
+

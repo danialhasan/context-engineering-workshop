@@ -14,6 +14,7 @@ env/
 # Local environment files
 .env
 .env.*
+!.env.example
 
 # Editor and OS files
 .DS_Store
@@ -29,3 +30,9 @@ logs/security/
 context_pack.json
 context_pack_before.json
 context_pack_after.json
+context_pack_*.json
+
+# Frontend generated outputs
+node_modules/
+dist/
+.vite/

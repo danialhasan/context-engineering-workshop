@@ -1,0 +1,38 @@
+name: search_nodes
+description: Search nodes within a session by lexical match (agent-invoked retrieval).
+allowed_phases: [PLAN, ACT, VERIFY]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, query]
+  properties:
+    run_id: {type: string}
+    query: {type: string}
+    types:
+      type: array
+      items: {type: string}
+    validated_only: {type: boolean}
+    limit: {type: integer}
+outputs_schema:
+  type: object
+  required: [matches, receipt_id]
+  properties:
+    matches:
+      type: array
+      items:
+        type: object
+        required: [node_id, type, validated, ts_utc, summary]
+        properties:
+          node_id: {type: string}
+          type: {type: string}
+          validated: {type: boolean}
+          ts_utc: {type: string}
+          summary: {type: string}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  query: verification evidence
+  types: [Receipt, TestResult, Artifact]
+  validated_only: true
+  limit: 5
+

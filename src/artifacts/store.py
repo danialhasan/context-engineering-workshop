@@ -21,6 +21,20 @@ class ArtifactStore:
         self.region_name = region_name or os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION")
         self.bucket = os.getenv("CEW_ARTIFACT_BUCKET", "")
         self.prefix = os.getenv("CEW_ARTIFACT_PREFIX", "workshop-artifacts").strip("/")
+        if not self.bucket and not self.mock_mode:
+            # Reduce setup friction: default to a globally-unique bucket name derived from the AWS account id.
+            self.bucket = self._derive_default_bucket()
+            os.environ.setdefault("CEW_ARTIFACT_BUCKET", self.bucket)
+
+    def _derive_default_bucket(self) -> str:
+        if not self.region_name:
+            raise RuntimeError("AWS region is required to derive a default artifact bucket.")
+        os.environ.setdefault("AWS_EC2_METADATA_DISABLED", "true")
+        sts = boto3.client("sts", region_name=self.region_name)
+        account_id = str(sts.get_caller_identity().get("Account") or "").strip()
+        if not account_id:
+            raise RuntimeError("Could not determine AWS account id to derive artifact bucket.")
+        return f"cew-artifacts-{account_id}-{self.region_name}"
 
     def _safe_name(self, name: str) -> str:
         cleaned = re.sub(r"[^a-zA-Z0-9._-]", "-", name).strip("-")

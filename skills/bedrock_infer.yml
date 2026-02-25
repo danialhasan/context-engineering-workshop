@@ -1,0 +1,39 @@
+name: bedrock_infer
+description: Run Bedrock inference with persisted session memory across turns.
+allowed_phases: [PLAN, ACT, VERIFY]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, prompt]
+  properties:
+    run_id: {type: string}
+    prompt: {type: string}
+    session_key: {type: string}
+    system_prompt: {type: string}
+    model_id: {type: string}
+    max_tokens: {type: integer}
+    temperature: {type: number}
+    max_history_turns:
+      type: integer
+      minimum: 0
+    reset_session: {type: boolean}
+outputs_schema:
+  type: object
+  required: [text, model_id, session_key, turn_index, history_turns_used, saved_memory, receipt_id]
+  properties:
+    text: {type: string}
+    model_id: {type: string}
+    session_key: {type: string}
+    turn_index: {type: integer}
+    history_turns_used: {type: integer}
+    saved_memory: {type: boolean}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  prompt: Summarize latest verification state and propose the next action.
+  session_key: planner-main
+  system_prompt: You are the workshop planner.
+  max_tokens: 256
+  temperature: 0
+  max_history_turns: 8
+  reset_session: false

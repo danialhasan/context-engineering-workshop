@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Workshop Harness GUI</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="page-header">
+        <h1>Workshop Harness GUI</h1>
+        <p class="subtitle">Minimal local view for run status, timeline, tools, memory, and graph.</p>
+      </header>
+
+      <section class="card controls-card" aria-label="Harness controls">
+        <h2>Controls</h2>
+        <form id="control-form" class="control-grid">
+          <label>
+            Session
+            <input id="session" name="session" type="text" required />
+          </label>
+
+          <label>
+            Phase
+            <select id="phase" name="phase">
+              <option value="PLAN">PLAN</option>
+              <option value="ACT">ACT</option>
+              <option value="VERIFY">VERIFY</option>
+            </select>
+          </label>
+
+          <label class="span-2">
+            Goal
+            <input id="goal" name="goal" type="text" required />
+          </label>
+
+          <label>
+            Session Key
+            <input id="session_key" name="session_key" type="text" required />
+          </label>
+
+          <label>
+            Max Steps
+            <input id="max_steps" name="max_steps" type="number" min="1" max="50" required />
+          </label>
+
+          <div class="button-row span-2">
+            <button id="run-harness" type="submit">Run Harness</button>
+            <button id="refresh-graph" type="button">Refresh Graph</button>
+            <button id="refresh-memory" type="button">Refresh Memory</button>
+          </div>
+        </form>
+        <p id="request-status" class="hint">Ready.</p>
+      </section>
+
+      <section class="dashboard-grid">
+        <article class="card" aria-label="Run status panel">
+          <h2>Run Status + Final Response</h2>
+          <div class="meta-row">
+            <span class="meta-label">Status:</span>
+            <strong id="run-status">No run yet.</strong>
+          </div>
+          <div class="meta-row">
+            <span class="meta-label">Final response:</span>
+          </div>
+          <pre id="final-response" class="pre-block">-</pre>
+          <details>
+            <summary>Raw run payload</summary>
+            <pre id="run-raw" class="pre-block">-</pre>
+          </details>
+        </article>
+
+        <article class="card" aria-label="Timeline panel">
+          <h2>Timeline (Turns / Actions / Tool Calls)</h2>
+          <ul id="timeline-list" class="event-list">
+            <li class="empty-state">No timeline yet.</li>
+          </ul>
+        </article>
+
+        <article class="card" aria-label="Tool events panel">
+          <h2>Tool Events</h2>
+          <ul id="tool-events-list" class="event-list">
+            <li class="empty-state">No tool events yet.</li>
+          </ul>
+        </article>
+
+        <article class="card" aria-label="Session memory panel">
+          <h2>Session Memory Turns (Decision Nodes)</h2>
+          <ul id="memory-list" class="event-list">
+            <li class="empty-state">No memory turns yet.</li>
+          </ul>
+        </article>
+
+        <article class="card span-2" aria-label="Graph snapshot panel">
+          <h2>Graph Snapshot</h2>
+          <div class="stats-row">
+            <div class="stat-item">
+              <span>Node Count</span>
+              <strong id="graph-node-count">-</strong>
+            </div>
+            <div class="stat-item">
+              <span>Edge Count</span>
+              <strong id="graph-edge-count">-</strong>
+            </div>
+            <div class="stat-item">
+              <span>Updated</span>
+              <strong id="graph-updated-at">-</strong>
+            </div>
+          </div>
+          <h3>Recent Nodes</h3>
+          <ul id="graph-nodes-list" class="event-list">
+            <li class="empty-state">No recent nodes yet.</li>
+          </ul>
+        </article>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

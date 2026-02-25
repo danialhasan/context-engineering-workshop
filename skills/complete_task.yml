@@ -1,0 +1,29 @@
+name: complete_task
+description: Mark a Task as completed (pending verification) and attach a completion summary.
+allowed_phases: [ACT]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, task_id, agent_id, summary]
+  properties:
+    run_id: {type: string}
+    task_id: {type: string}
+    agent_id: {type: string}
+    summary: {type: string}
+    status: {type: string}
+    artifact_uri: {type: string}
+outputs_schema:
+  type: object
+  required: [task_id, status, receipt_id]
+  properties:
+    task_id: {type: string}
+    status: {type: string}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  task_id: node-task-001
+  agent_id: worker-a
+  summary: Uploaded artifact evidence and wrote receipt.
+  status: success
+  artifact_uri: s3://bucket/prefix/artifact.txt
+

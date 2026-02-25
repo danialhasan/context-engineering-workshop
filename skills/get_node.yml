@@ -1,0 +1,20 @@
+name: get_node
+description: Fetch a single graph node by id (agent-invoked retrieval).
+allowed_phases: [PLAN, ACT, VERIFY]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, node_id]
+  properties:
+    run_id: {type: string}
+    node_id: {type: string}
+outputs_schema:
+  type: object
+  required: [node, receipt_id]
+  properties:
+    node: {type: object}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  node_id: node-abc123
+

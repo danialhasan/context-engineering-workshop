@@ -1,0 +1,34 @@
+name: list_tasks
+description: List tasks in a session with basic status fields (coordination view).
+allowed_phases: [PLAN, ACT, VERIFY]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id]
+  properties:
+    run_id: {type: string}
+    state: {type: string}
+    assigned_to: {type: string}
+    limit: {type: integer}
+outputs_schema:
+  type: object
+  required: [tasks, receipt_id]
+  properties:
+    tasks:
+      type: array
+      items:
+        type: object
+        required: [task_id, title, state, validated, updated_at]
+        properties:
+          task_id: {type: string}
+          title: {type: string}
+          state: {type: string}
+          assigned_to: {type: string}
+          validated: {type: boolean}
+          updated_at: {type: string}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  state: open
+  limit: 20
+

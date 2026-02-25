@@ -1,0 +1,25 @@
+name: claim_task
+description: Claim a Task for an agent role and record a typed handoff.
+allowed_phases: [ACT]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, task_id, agent_id]
+  properties:
+    run_id: {type: string}
+    task_id: {type: string}
+    agent_id: {type: string}
+    claim_state: {type: string}
+outputs_schema:
+  type: object
+  required: [claim_id, task_id, receipt_id]
+  properties:
+    claim_id: {type: string}
+    task_id: {type: string}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  task_id: node-task-001
+  agent_id: worker-a
+  claim_state: claimed
+

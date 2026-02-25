@@ -1,18 +1,20 @@
-# Context Engineering Workshop Spec (MVP for Readiness Freeze)
+# Context Engineering Workshop Spec (Readiness Freeze)
 
 ## 1) Outcomes (Measurable)
 
 By the end of the 90-minute workshop, each attendee can:
 
 1. Run `make doctor` successfully in a fresh AWS workshop account.
-2. Run `make smoke` successfully and complete one PLAN -> ACT -> VERIFY cycle.
-3. Show persisted evidence:
-   - graph metadata and receipts in DynamoDB
-   - large artifacts in S3
-4. Use `aws_tool` (JSON in/out) without invoking raw `aws` commands through the agent path.
-5. Compare summarization behavior with Bedrock enabled and disabled (fallback path still passes).
+2. Run `make provision` successfully (or confirm required resources already exist).
+3. Complete one initializer -> coder implementation pass with TDD and verification levels.
+4. Complete one PLAN -> ACT -> VERIFY loop using allowlisted tools (tasks, receipts, artifacts, verification).
+5. Show persisted evidence:
+   - graph nodes/edges in DynamoDB (`GraphNodes`, `GraphEdges`)
+   - large artifacts in S3 (`CEW_ARTIFACT_BUCKET`)
+6. Use `aws_tool` as the allowlisted execution wrapper (`list-skills` and `run`).
+7. Show Bedrock-optional behavior (fallback path still works when `BEDROCK_ENABLED=0`).
 
-Lecture outcome (60-minute block):
+Lecture outcome (30-minute block):
 
 1. Attendees can explain the five primitives and how they compose:
    - ontology
@@ -24,424 +26,216 @@ Lecture outcome (60-minute block):
 ## 2) Constraints (MVP Scope)
 
 - Time-boxed for a single 90-minute hands-on session.
-- Maximum checkpoints: CP0-CP4.
-- Maximum skills: 6-8 (this spec defines 7).
-- Allowed AWS primitives only:
-  - DynamoDB
-  - S3
-  - Bedrock (optional)
-  - IAM/STS (assumed for auth/role)
-- No extra AWS services introduced.
-- Bedrock cannot be required for passing smoke tests.
-- Agent-facing execution uses `aws_tool` only (strict validation, JSON contracts, receipts).
+- AWS primitives only: DynamoDB, S3, IAM/STS, optional Bedrock.
+- Bedrock must remain optional for workshop pass criteria.
+- No additional AWS services are introduced.
+- Agent-facing execution path stays behind `aws_tool` with schema/phase validation.
 
-## 3) AWS Primitives Used
+## 3) Runtime Configuration and Resource Assumptions
 
-### DynamoDB
+Required environment variables:
 
-- `cew_graph` table:
-  - stores nodes and edges for ontology/context graph.
-- `cew_receipts` table:
-  - stores execution receipts, verification status, and pointers to artifacts.
-
-### S3
-
-- `cew-artifacts-<account>-<region>` bucket:
-  - stores large logs, transcripts, diffs, and other evidence blobs.
-
-### Bedrock (Optional)
-
-- Used only by `summarize_evidence` when configured.
-- If unavailable, fallback summarizer must preserve output schema.
-
-### IAM/STS (Assumed)
-
-- `sts:GetCallerIdentity` confirms account and role.
-- least-privilege role for DynamoDB/S3 and optional Bedrock invoke.
-
-## 4) Repo Layout (Planned)
-
-```text
-.
-├── WORKSHOP_SPEC.md
-├── Makefile
-├── README.md
-├── docs/
-│   ├── lecture/60min-outline.md
-│   ├── workshop/90min-lab.md
-│   └── runbooks/readiness-freeze.md
-├── src/
-│   ├── aws_tool/
-│   │   ├── cli.py
-│   │   ├── allowlist.py
-│   │   ├── schemas.py
-│   │   └── receipts.py
-│   ├── graph/
-│   │   ├── ontology.py
-│   │   ├── context_graph.py
-│   │   └── compiler.py
-│   ├── skills/
-│   │   └── registry.py
-│   ├── orchestrator/
-│   │   └── loop.py
-│   └── summarizer/
-│       ├── bedrock.py
-│       └── fallback.py
-├── tests/
-│   ├── doctor/
-│   ├── smoke/
-│   └── fixtures/
-└── scripts/
-    └── seed_workshop_data.py
-```
-
-## 5) Ontology (Minimal)
-
-### Node Types
-
-1. `Run`
-- One orchestrator attempt, scoped by `run_id`.
-
-2. `SkillExecution`
-- One skill invocation with input/output snapshots.
-
-3. `Receipt`
-- Immutable execution evidence record.
-
-4. `Artifact`
-- Large payload reference (usually S3 object).
-
-5. `Claim`
-- Verifiable statement derived from evidence.
-
-### Edge Types
-
-1. `RUN_HAS_STEP` (`Run -> SkillExecution`)
-2. `STEP_EMITS_RECEIPT` (`SkillExecution -> Receipt`)
-3. `RECEIPT_POINTS_TO` (`Receipt -> Artifact`)
-4. `CLAIM_SUPPORTED_BY` (`Claim -> Receipt`)
-5. `RUN_ASSERTS` (`Run -> Claim`)
-
-### Constraints (exactly 3)
-
-1. Every `SkillExecution` must have exactly one parent `Run`.
-2. Every `Receipt` must include `status`, `ts_utc`, and `checksum`; receipts above size threshold must point to an `Artifact`.
-3. Every `Claim` in `verified` state must have at least one `CLAIM_SUPPORTED_BY` edge to a `Receipt` with `status=success`.
-
-## 6) Skill Set (7 Skills Total)
-
-All skills are typed and execute AWS actions only through `aws_tool` allowlisted operations.
-
-### Skill 1: `resolve_identity`
-
-- Input schema:
-```json
-{
-  "type": "object",
-  "required": ["run_id"],
-  "properties": {
-    "run_id": {"type": "string"}
-  }
-}
-```
-- Output schema:
-```json
-{
-  "type": "object",
-  "required": ["account_id", "arn", "user_id", "receipt_id"],
-  "properties": {
-    "account_id": {"type": "string"},
-    "arn": {"type": "string"},
-    "user_id": {"type": "string"},
-    "receipt_id": {"type": "string"}
-  }
-}
-```
-- AWS calls triggered:
-  - `sts:GetCallerIdentity`
-  - `dynamodb:PutItem` (receipt)
-
-### Skill 2: `upsert_node`
-
-- Input schema:
-```json
-{
-  "type": "object",
-  "required": ["run_id", "node_type", "node_id", "payload"],
-  "properties": {
-    "run_id": {"type": "string"},
-    "node_type": {"type": "string", "enum": ["Run", "SkillExecution", "Receipt", "Artifact", "Claim"]},
-    "node_id": {"type": "string"},
-    "payload": {"type": "object"}
-  }
-}
-```
-- Output schema:
-```json
-{
-  "type": "object",
-  "required": ["node_pk", "node_sk", "version", "receipt_id"],
-  "properties": {
-    "node_pk": {"type": "string"},
-    "node_sk": {"type": "string"},
-    "version": {"type": "integer"},
-    "receipt_id": {"type": "string"}
-  }
-}
-```
-- AWS calls triggered:
-  - `dynamodb:PutItem` / `dynamodb:UpdateItem` (`cew_graph`)
-  - `dynamodb:PutItem` (`cew_receipts`)
-
-### Skill 3: `link_edge`
-
-- Input schema:
-```json
-{
-  "type": "object",
-  "required": ["run_id", "from_id", "to_id", "edge_type"],
-  "properties": {
-    "run_id": {"type": "string"},
-    "from_id": {"type": "string"},
-    "to_id": {"type": "string"},
-    "edge_type": {"type": "string", "enum": ["RUN_HAS_STEP", "STEP_EMITS_RECEIPT", "RECEIPT_POINTS_TO", "CLAIM_SUPPORTED_BY", "RUN_ASSERTS"]}
-  }
-}
-```
-- Output schema:
-```json
-{
-  "type": "object",
-  "required": ["edge_id", "receipt_id"],
-  "properties": {
-    "edge_id": {"type": "string"},
-    "receipt_id": {"type": "string"}
-  }
-}
-```
-- AWS calls triggered:
-  - `dynamodb:PutItem` (`cew_graph`)
-  - `dynamodb:PutItem` (`cew_receipts`)
-
-### Skill 4: `store_artifact`
-
-- Input schema:
-```json
-{
-  "type": "object",
-  "required": ["run_id", "artifact_type", "content"],
-  "properties": {
-    "run_id": {"type": "string"},
-    "artifact_type": {"type": "string", "enum": ["log", "diff", "transcript", "json"]},
-    "content": {"type": "string"}
-  }
-}
-```
-- Output schema:
-```json
-{
-  "type": "object",
-  "required": ["s3_uri", "etag", "bytes", "artifact_id", "receipt_id"],
-  "properties": {
-    "s3_uri": {"type": "string"},
-    "etag": {"type": "string"},
-    "bytes": {"type": "integer"},
-    "artifact_id": {"type": "string"},
-    "receipt_id": {"type": "string"}
-  }
-}
-```
-- AWS calls triggered:
-  - `s3:PutObject`
-  - `dynamodb:PutItem` (`cew_graph`, `cew_receipts`)
-
-### Skill 5: `record_receipt`
-
-- Input schema:
-```json
-{
-  "type": "object",
-  "required": ["run_id", "skill_name", "status", "summary"],
-  "properties": {
-    "run_id": {"type": "string"},
-    "skill_name": {"type": "string"},
-    "status": {"type": "string", "enum": ["success", "failure"]},
-    "summary": {"type": "string"},
-    "artifact_uri": {"type": "string"}
-  }
-}
-```
-- Output schema:
-```json
-{
-  "type": "object",
-  "required": ["receipt_id", "ts_utc"],
-  "properties": {
-    "receipt_id": {"type": "string"},
-    "ts_utc": {"type": "string"}
-  }
-}
-```
-- AWS calls triggered:
-  - `dynamodb:PutItem` (`cew_receipts`)
-
-### Skill 6: `compile_context_pack`
-
-- Input schema:
-```json
-{
-  "type": "object",
-  "required": ["run_id", "max_items", "byte_budget"],
-  "properties": {
-    "run_id": {"type": "string"},
-    "max_items": {"type": "integer", "minimum": 1, "maximum": 20},
-    "byte_budget": {"type": "integer", "minimum": 1024}
-  }
-}
-```
-- Output schema:
-```json
-{
-  "type": "object",
-  "required": ["pack_id", "items", "used_bytes", "dropped_count"],
-  "properties": {
-    "pack_id": {"type": "string"},
-    "items": {"type": "array"},
-    "used_bytes": {"type": "integer"},
-    "dropped_count": {"type": "integer"}
-  }
-}
-```
-- AWS calls triggered:
-  - `dynamodb:Query` (`cew_graph`, `cew_receipts`)
-  - `s3:GetObject` (when artifact-backed evidence is needed)
-  - `dynamodb:PutItem` (`cew_receipts`)
-
-### Skill 7: `summarize_evidence`
-
-- Input schema:
-```json
-{
-  "type": "object",
-  "required": ["run_id", "evidence_refs"],
-  "properties": {
-    "run_id": {"type": "string"},
-    "evidence_refs": {"type": "array", "items": {"type": "string"}},
-    "max_chars": {"type": "integer", "minimum": 200, "maximum": 4000}
-  }
-}
-```
-- Output schema:
-```json
-{
-  "type": "object",
-  "required": ["summary", "provider", "receipt_id"],
-  "properties": {
-    "summary": {"type": "string"},
-    "provider": {"type": "string", "enum": ["bedrock", "fallback"]},
-    "receipt_id": {"type": "string"}
-  }
-}
-```
-- AWS calls triggered:
-  - Optional `bedrock:InvokeModel`
-  - `s3:GetObject` (if evidence refs point to S3 artifacts)
-  - `dynamodb:PutItem` (`cew_receipts`)
-
-## 7) Checkpoints (CP0-CP4 for 90 Minutes)
-
-Total lab target: 90 minutes.
-
-### CP0 (10 min): Environment Doctor
-
-- Commands attendees run:
 ```bash
+export AWS_REGION=<workshop-region>
+export AWS_DEFAULT_REGION=$AWS_REGION
+export CEW_GRAPH_NODES_TABLE=GraphNodes
+export CEW_GRAPH_EDGES_TABLE=GraphEdges
+export CEW_ARTIFACT_BUCKET=<workshop-bucket>
+export BEDROCK_ENABLED=0
+```
+
+Notes:
+- `CEW_MOCK_AWS=1` is explicit mock mode. Real workshop flow uses `CEW_MOCK_AWS=0` or unset.
+- CloudShell is acceptable only when `python3 --version` is 3.10+.
+
+DynamoDB table assumptions used by code:
+- `GraphNodes` partition key: `node_id` (String)
+- `GraphEdges` partition key: `edge_id` (String)
+- Graph traversal uses `Scan` filters on `from_id`/`to_id`; `dynamodb:Scan` permission is required.
+
+## 4) Golden Path Commands (Current)
+
+From repo root:
+
+```bash
+make install
+make provision
 make doctor
 ```
-- Pass criteria:
-  - exit code `0`
-  - shows valid `account_id`, `region`, and required env vars
-  - confirms access to planned DynamoDB tables and S3 bucket names (or creatable)
-- Fail criteria:
-  - non-zero exit
-  - missing credentials/region/role
-  - permission denied for required IAM actions
 
-### CP1 (15 min): Resource Bootstrap
+Current behavior:
+- `make install` bootstraps `.venv` (if missing) and installs dependencies in that environment.
+- `make provision` creates GraphNodes/GraphEdges and a default artifact bucket when missing, and prints recommended exports.
+- `make doctor` checks Python 3.10+, AWS CLI, region, STS identity, DynamoDB table existence + read/write round-trip, S3 write, and optional Bedrock listing.
+- `make smoke` is real-AWS only and fails loudly with `stage`, `error`, and `session_id`.
+- `make compile` defaults to real AWS (`CEW_MOCK_AWS=0`) unless explicitly overridden; this is a control/baseline tool, not the core workshop path.
 
-- Commands attendees run:
+Explicit mock mode examples (for local dry-runs only):
+
 ```bash
-make aws-init
-make aws-check
+CEW_MOCK_AWS=1 make compile STRATEGY=recite SESSION=demo TASK="demo"
+CEW_MOCK_AWS=1 .venv/bin/python -m src.orchestrator.loop --smoke
 ```
-- Pass criteria:
-  - `cew_graph` and `cew_receipts` tables exist
-  - workshop S3 bucket exists and is writable
-  - outputs are idempotent (re-run produces no destructive drift)
-- Fail criteria:
-  - resources missing after init
-  - write test fails
 
-### CP2 (20 min): Ontology + Context Graph Seed
+## 5) Implementation Map (Current)
 
-- Commands attendees run:
+Core entrypoints:
+- `Makefile`
+- `src/tools/doctor.py`
+- `src/tools/smoke.py`
+- `src/tools/compile_context.py`
+
+Execution and policy layer:
+- `src/aws_tool/cli.py`
+- `src/aws_tool/dispatcher.py`
+- `skills/*.yml`
+
+State and context:
+- `src/graph/context_graph.py`
+- `src/graph/compiler.py`
+- `src/graph/ontology.py`
+- `ontology/ontology.yml`
+
+Artifact and summarization:
+- `src/artifacts/store.py`
+- `src/summarizer/fallback.py`
+- `src/summarizer/bedrock.py`
+
+## 6) Skill Set (Allowlisted)
+
+Current skill names:
+- `assemble_context_view_agent`
+- `bedrock_infer`
+- `resolve_identity`
+- `upsert_node`
+- `link_edge`
+- `upload_artifact`
+- `write_receipt`
+- `compile_context_pack`
+- `summarize_evidence`
+- `create_task`
+- `claim_task`
+- `complete_task`
+- `verify_task`
+- `list_tasks`
+- `search_nodes`
+- `get_node`
+- `neighbors`
+
+Inspection command:
+
 ```bash
-make seed-graph
-make verify-graph
+./aws_tool list-skills
+# or
+.venv/bin/python -m src.aws_tool.cli list-skills
 ```
-- Pass criteria:
-  - required node types and edge types are present
-  - all 3 ontology constraints validate
-  - receipts are present for seed operations
-- Fail criteria:
-  - invalid edge type or orphan node
-  - missing mandatory receipt fields
-  - constraint validation returns false
 
-### CP3 (20 min): Skills + Context Compiler
+## 7) Workshop Checkpoints (CP0-CP4)
 
-- Commands attendees run:
+### CP0 (10 min): Environment + Doctor
+
+Commands:
+
 ```bash
-make run-skills
-make compile-context
-make verify-context-pack
+python3 --version
+aws sts get-caller-identity
+make install
+make provision
+make doctor
 ```
-- Pass criteria:
-  - at least one successful receipt per skill in scope
-  - compiled pack respects `max_items` and `byte_budget`
-  - deterministic pack hash for same fixture input
-- Fail criteria:
-  - any skill emits schema-invalid output
-  - budget overflow or nondeterministic pack ordering
 
-### CP4 (25 min): Orchestrator Smoke (PLAN -> ACT -> VERIFY)
+Pass criteria:
+- Python 3.10+
+- `make doctor` exits 0 and prints `PASS: doctor checks complete`
 
-- Commands attendees run:
+### CP1 (25 min): Single-Agent Lifecycle (Tasks + Evidence)
+
+Commands:
+
 ```bash
+SESSION="cew-$(date +%s)"
+./aws_tool run create_task --session "$SESSION" --phase PLAN --json "{\"run_id\":\"$SESSION\",\"title\":\"Write evidence and verify it\"}"
+./aws_tool run list_tasks --session "$SESSION" --phase PLAN --json "{\"run_id\":\"$SESSION\"}"
+# copy task_id
+./aws_tool run claim_task --session "$SESSION" --phase ACT --json "{\"run_id\":\"$SESSION\",\"task_id\":\"<task_id>\",\"agent_id\":\"worker-1\"}"
+./aws_tool run upload_artifact --session "$SESSION" --phase ACT --json "{\"run_id\":\"$SESSION\",\"name\":\"evidence.txt\",\"content\":\"hello from ACT\"}"
+# copy s3_uri
+./aws_tool run complete_task --session "$SESSION" --phase ACT --json "{\"run_id\":\"$SESSION\",\"task_id\":\"<task_id>\",\"agent_id\":\"worker-1\",\"summary\":\"Uploaded evidence\",\"artifact_uri\":\"<s3_uri>\",\"status\":\"success\"}"
+./aws_tool run verify_task --session "$SESSION" --phase VERIFY --json "{\"run_id\":\"$SESSION\",\"task_id\":\"<task_id>\",\"check_type\":\"s3_head_object\",\"artifact_uri\":\"<s3_uri>\"}"
+```
+
+Pass criteria:
+- exits 0
+- task transitions to verified (`verify_task` returns `status=pass`)
+
+### CP2 (10 min): Agent-Invoked Retrieval
+
+Commands:
+
+```bash
+./aws_tool run search_nodes --session "$SESSION" --phase PLAN --json "{\"run_id\":\"$SESSION\",\"query\":\"evidence\",\"limit\":5}"
+./aws_tool run neighbors --session "$SESSION" --phase VERIFY --json "{\"run_id\":\"$SESSION\",\"node_id\":\"<task_id>\",\"direction\":\"outbound\"}"
+```
+
+Pass criteria:
+- retrieval returns expected nodes/receipts for the session
+- task shows outbound evidence edges
+
+### CP3 (20 min): Initializer -> Coder Implementation Pass (Agent-Native)
+
+Commands:
+
+```bash
+./aws_tool run get_node --session "$SESSION" --phase PLAN --json "{\"run_id\":\"$SESSION\",\"node_id\":\"<task_id>\"}"
+./aws_tool run search_nodes --session "$SESSION" --phase PLAN --json "{\"run_id\":\"$SESSION\",\"query\":\"verification\",\"limit\":10}"
+```
+
+Pass criteria:
+- attendee uses the initialized scaffold and completes at least one coder TODO with TDD
+- verification level 1 passes (schema/phase/tool contract)
+- verification level 2 passes (deterministic runtime check)
+- verification level 3 passes (task objective satisfied with linked evidence)
+
+Optional control experiment:
+
+```bash
+make compile STRATEGY=recite SESSION="$SESSION" TASK="Summarize latest verified state"
+make compile STRATEGY=graph_first SESSION="$SESSION" TASK="Summarize latest verified state"
+```
+
+### CP4 (25 min): Swarm Lifecycle + Optional Smoke Proof Artifact
+
+Commands:
+
+```bash
+# Swarm: planner creates tasks, workers claim/complete, verifier promotes.
+# (Executed via your agent tool as multiple agents using the same SESSION.)
+
+# Optional: repo golden-path proof artifact
 make smoke
-BEDROCK_ENABLED=0 make smoke
 ```
-- Pass criteria:
-  - both commands exit `0`
-  - verification gate blocks bad claims and allows valid claims
-  - final run emits receipts and artifact pointers
-- Fail criteria:
-  - smoke fails in either mode
-  - fallback summarizer output contract differs from Bedrock mode
+
+Pass criteria:
+- swarm coordination works without cross-agent confusion (tasks/claims/evidence are typed)
+- smoke remains available as an optional end-to-end proof artifact
 
 ## 8) Readiness Freeze Definition (Tomorrow)
 
-By **Wednesday, February 25, 2026**, freeze is achieved only if:
+By Wednesday, February 25, 2026, freeze is achieved only if:
 
-1. Workshop flow is stable across CP0-CP4 with no missing steps.
-2. `aws_tool` is the only agent-facing AWS execution path and enforces allowlist + strict JSON validation.
-3. DynamoDB and S3 persistence is proven in smoke receipts.
-4. Bedrock optional path and fallback path both pass smoke.
-5. 60-minute lecture outline and 90-minute lab guide are aligned to this spec.
+1. Golden path (`install -> provision -> doctor`) works in a fresh workshop account.
+2. Single-agent lifecycle works end-to-end (tasks -> evidence -> verify).
+3. Docs use current env var names and current commands only.
+4. Bedrock remains optional and does not block baseline success.
+5. Escalation guidance for IAM/region/resource issues is ready for on-site SA support.
 
 ## 9) Definition of Done
 
 Done means, in a fresh AWS workshop account:
 
 1. `make doctor` passes.
-2. `make smoke` passes.
+2. Initializer step completes (`install`, `provision`, `doctor`, tool list visible).
+3. Coder step completes for at least one TODO with TDD and three verification levels.
+4. Single-agent lifecycle succeeds (tasks + receipts + artifact + verify).
+5. Swarm lifecycle succeeds with role-separated coordination (planner/worker/verifier).
+6. Participant/facilitator/SA docs are consistent with implemented behavior.

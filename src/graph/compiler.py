@@ -8,6 +8,7 @@ import math
 import os
 from collections import deque
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 import boto3
@@ -34,6 +35,86 @@ TYPE_PRIORITY: dict[str, int] = {
     "Artifact": 40,
     "Error": 20,
 }
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert DynamoDB-native values (e.g. Decimal) into JSON-serializable types."""
+    if isinstance(value, Decimal):
+        return int(value) if value % 1 == 0 else float(value)
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+def allowed_skills_for_phase(phase: str) -> list[str]:
+    defs = load_skill_definitions()
+    allowed = [
+        name
+        for name, skill_def in defs.items()
+        if phase in (skill_def.get("allowed_phases") or [])
+    ]
+    return sorted(allowed)
+
+
+def evaluate_assembly_policy_checks(
+    *,
+    selected_items: list[dict[str, Any]],
+    token_estimate: int,
+    token_budget: int,
+    phase: str,
+    requested_skills: list[str] | None = None,
+) -> dict[str, Any]:
+    requested = sorted({str(skill) for skill in (requested_skills or []) if str(skill).strip()})
+    allowed = allowed_skills_for_phase(phase)
+    allowed_set = set(allowed)
+    invalid_requested = sorted([skill for skill in requested if skill not in allowed_set])
+
+    objective_present = any(str(item.get("type")) == "Objective" for item in selected_items)
+    plan_present = any(str(item.get("type")) == "Plan" for item in selected_items)
+    anchors_passed = objective_present and plan_present
+    budget_passed = token_estimate <= token_budget
+    phase_rights_passed = not invalid_requested
+
+    failed_checks: list[str] = []
+    if not budget_passed:
+        failed_checks.append(
+            f"token budget exceeded ({token_estimate} > {token_budget})"
+        )
+    if not objective_present:
+        failed_checks.append("missing required objective anchor")
+    if not plan_present:
+        failed_checks.append("missing required plan anchor")
+    if not phase_rights_passed:
+        failed_checks.append(
+            "requested skills not allowed in phase "
+            f"{phase}: {', '.join(invalid_requested)}"
+        )
+
+    return {
+        "passed": not failed_checks,
+        "failed_checks": failed_checks,
+        "checks": {
+            "budget": {
+                "passed": budget_passed,
+                "token_estimate": token_estimate,
+                "token_budget": token_budget,
+            },
+            "anchors": {
+                "passed": anchors_passed,
+                "objective_present": objective_present,
+                "plan_present": plan_present,
+            },
+            "phase_rights": {
+                "passed": phase_rights_passed,
+                "phase": phase,
+                "requested_skills": requested,
+                "invalid_skills": invalid_requested,
+                "allowed_skills": allowed,
+            },
+        },
+    }
 
 
 class ContextCompiler:
@@ -67,7 +148,7 @@ class ContextCompiler:
                     "kind": "node",
                     "id": node.get("node_id", ""),
                     "type": node.get("node_type", ""),
-                    "payload": node.get("payload", {}),
+                    "payload": _json_safe(node.get("payload", {})),
                 }
             )
         for edge in edges:
@@ -166,6 +247,81 @@ class ContextCompiler:
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
         return pack_payload
+
+    def assemble_context_view_agent(
+        self,
+        session_id: str,
+        task: str,
+        phase: str,
+        token_budget: int,
+        retrieval_hints: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        hints = retrieval_hints if isinstance(retrieval_hints, dict) else {}
+        session_graph = self.graph.list_session(session_id)
+        nodes = session_graph.get("nodes", [])
+
+        filtered_nodes = self._filter_nodes_for_agent_assembly(
+            nodes=nodes,
+            task=task,
+            retrieval_hints=hints,
+        )
+
+        selected_items: list[dict[str, Any]] = []
+        used_tokens = 0
+        for node in filtered_nodes:
+            linked = self._linked_to_task(node, task)
+            factors = [
+                "validated" if bool(node.get("validated")) else "unvalidated",
+                "linked-to-task" if linked else "unlinked",
+                f"type-priority:{TYPE_PRIORITY.get(self._node_type(node), 30)}",
+                f"recent:{self._node_timestamp(node).isoformat()}",
+            ]
+            if hints.get("query"):
+                factors.append("query-matched")
+
+            item = self._build_item(
+                node=node,
+                reason="AGENT_ASSEMBLY: " + ", ".join(factors),
+                linked_to_task=linked,
+            )
+            cost = int(item.get("token_estimate", 0))
+            if used_tokens + cost > token_budget:
+                continue
+            selected_items.append(item)
+            used_tokens += cost
+
+        sorted_nodes = sorted(nodes, key=self._node_timestamp, reverse=True)
+        objective_item = self._latest_or_synthetic_objective(sorted_nodes, task)
+        plan_item = self._latest_or_synthetic_plan(sorted_nodes)
+        selected_items = self._ensure_anchor_item(selected_items, objective_item, token_budget)
+        selected_items = self._ensure_anchor_item(selected_items, plan_item, token_budget)
+
+        token_estimate = sum(int(item.get("token_estimate", 0)) for item in selected_items)
+        requested_skills_raw = hints.get("requested_skills")
+        requested_skills = (
+            [str(skill) for skill in requested_skills_raw]
+            if isinstance(requested_skills_raw, list)
+            else []
+        )
+        policy_checks = evaluate_assembly_policy_checks(
+            selected_items=selected_items,
+            token_estimate=token_estimate,
+            token_budget=token_budget,
+            phase=phase,
+            requested_skills=requested_skills,
+        )
+
+        return {
+            "selected_items": selected_items,
+            "token_estimate": token_estimate,
+            "policy_checks": policy_checks,
+            "retrieval_provenance": {
+                "query": hints.get("query"),
+                "types": hints.get("types"),
+                "validated_only": bool(hints.get("validated_only")) if "validated_only" in hints else False,
+                "candidate_count": len(filtered_nodes),
+            },
+        }
 
     def _compile_recite(
         self,
@@ -471,13 +627,82 @@ class ContextCompiler:
             return False
 
     def _allowed_skills_for_phase(self, phase: str) -> list[str]:
-        defs = load_skill_definitions()
-        allowed = [
-            name
-            for name, skill_def in defs.items()
-            if phase in (skill_def.get("allowed_phases") or [])
-        ]
-        return sorted(allowed)
+        return allowed_skills_for_phase(phase)
+
+    def _filter_nodes_for_agent_assembly(
+        self,
+        nodes: list[dict[str, Any]],
+        task: str,
+        retrieval_hints: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        query = str(retrieval_hints.get("query") or "").strip().lower()
+        types_raw = retrieval_hints.get("types")
+        type_filter = {str(node_type) for node_type in types_raw} if isinstance(types_raw, list) else None
+        validated_only = bool(retrieval_hints.get("validated_only")) if "validated_only" in retrieval_hints else False
+        limit_raw = retrieval_hints.get("limit")
+        limit = int(limit_raw) if isinstance(limit_raw, int) and limit_raw > 0 else 80
+
+        def matches(node: dict[str, Any]) -> bool:
+            if type_filter is not None and self._node_type(node) not in type_filter:
+                return False
+            if validated_only and not bool(node.get("validated")):
+                return False
+            if not query:
+                return True
+            blob = json.dumps(
+                {
+                    "type": self._node_type(node),
+                    "payload": self._node_payload(node),
+                },
+                sort_keys=True,
+                default=str,
+            ).lower()
+            terms = [term for term in query.split() if len(term) >= 3]
+            if not terms:
+                return query in blob
+            return any(term in blob for term in terms)
+
+        filtered = [node for node in nodes if matches(node)]
+        filtered.sort(
+            key=lambda node: (
+                1 if self._linked_to_task(node, task) else 0,
+                1 if bool(node.get("validated")) else 0,
+                self._node_timestamp(node).timestamp(),
+                TYPE_PRIORITY.get(self._node_type(node), 30),
+            ),
+            reverse=True,
+        )
+        return filtered[:limit]
+
+    def _ensure_anchor_item(
+        self,
+        selected_items: list[dict[str, Any]],
+        anchor_item: dict[str, Any],
+        token_budget: int,
+    ) -> list[dict[str, Any]]:
+        anchor_type = str(anchor_item.get("type"))
+        if any(str(item.get("type")) == anchor_type for item in selected_items):
+            return selected_items
+
+        out = list(selected_items)
+        total = sum(int(item.get("token_estimate", 0)) for item in out)
+        anchor_cost = int(anchor_item.get("token_estimate", 0))
+
+        while out and total + anchor_cost > token_budget:
+            drop_idx = -1
+            for idx in range(len(out) - 1, -1, -1):
+                if str(out[idx].get("type")) in {"Objective", "Plan"}:
+                    continue
+                drop_idx = idx
+                break
+            if drop_idx == -1:
+                break
+            dropped = out.pop(drop_idx)
+            total -= int(dropped.get("token_estimate", 0))
+
+        if total + anchor_cost <= token_budget:
+            out.append(anchor_item)
+        return out
 
     def _node_type(self, node: dict[str, Any]) -> str:
         value = node.get("type") or node.get("node_type") or "Unknown"
@@ -491,7 +716,7 @@ class ContextCompiler:
         payload = node.get("data") if isinstance(node.get("data"), dict) else node.get("payload")
         if not isinstance(payload, dict):
             return {}
-        return payload
+        return _json_safe(payload)
 
     def _node_timestamp(self, node: dict[str, Any]) -> datetime:
         payload = self._node_payload(node)

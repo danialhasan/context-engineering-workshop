@@ -1,0 +1,26 @@
+name: create_task
+description: Create a Task node for coordination (planner/coordinator).
+allowed_phases: [PLAN]
+produces: [Receipt]
+inputs_schema:
+  type: object
+  required: [run_id, title]
+  properties:
+    run_id: {type: string}
+    title: {type: string}
+    description: {type: string}
+    state: {type: string}
+    task_id: {type: string}
+outputs_schema:
+  type: object
+  required: [task_id, state, receipt_id]
+  properties:
+    task_id: {type: string}
+    state: {type: string}
+    receipt_id: {type: string}
+example_payload:
+  run_id: run-demo
+  title: Create baseline harness loop
+  description: Implement PLAN -> ACT -> VERIFY with receipts and evidence.
+  state: open
+

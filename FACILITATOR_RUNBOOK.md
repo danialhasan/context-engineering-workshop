@@ -5,7 +5,8 @@ Workshop length: 90 minutes.
 ## Minute-by-Minute Script
 
 0-5 min: kickoff
-- Say: "Today we will run a real PLAN->ACT->VERIFY loop on AWS and prove evidence promotion in the context pack."
+- Say: "Today we are building context systems for agents, not just running scripts."
+- Say: "The workshop pattern is initializer -> coder, then single agent -> swarm."
 - Attendees run:
 
 ```bash
@@ -13,62 +14,81 @@ pwd
 ls
 ```
 
-5-15 min: environment setup
+5-15 min: environment setup (keep this under 10 minutes)
 - Say: "Set region and credentials first; everything else depends on this."
+- Say: "CloudShell users must confirm Python 3.10+ before install. If lower, switch to local."
 - Attendees run:
 
 ```bash
+python3 --version
 export AWS_REGION=<workshop-region>
 export AWS_DEFAULT_REGION=$AWS_REGION
 aws sts get-caller-identity
 ```
 
-15-25 min: repo bootstrap
-- Say: "Install once, then we validate infra access."
+15-25 min: repo bootstrap + provisioning
+- Say: "This is the initializer step. We start with scaffold + infra ready."
 - Attendees run:
 
 ```bash
-export CEW_GRAPH_NODES_TABLE=GraphNodes
-export CEW_GRAPH_EDGES_TABLE=GraphEdges
-export CEW_ARTIFACT_BUCKET=<workshop-bucket>
 export BEDROCK_ENABLED=0
 unset CEW_MOCK_AWS
 make install
+make provision
 make doctor
+./aws_tool list-skills
 ```
 
-25-40 min: first smoke pass
-- Say: "Smoke is the golden path; it should fail loudly if anything is wrong."
+- Note: `make install` bootstraps `.venv` and make targets then run with `.venv/bin/python`.
+
+25-40 min: single-agent lifecycle baseline
+- Say: "Now we run one loop and prove evidence-gated promotion."
+- Attendees run (copy/paste session id into every command):
+
+```bash
+SESSION="cew-$(date +%s)"
+./aws_tool run create_task --session "$SESSION" --phase PLAN --json "{\"run_id\":\"$SESSION\",\"title\":\"Implement TODO and verify\"}"
+./aws_tool run list_tasks --session "$SESSION" --phase PLAN --json "{\"run_id\":\"$SESSION\"}"
+# copy task_id
+./aws_tool run claim_task --session "$SESSION" --phase ACT --json "{\"run_id\":\"$SESSION\",\"task_id\":\"<task_id>\",\"agent_id\":\"coder-1\"}"
+./aws_tool run upload_artifact --session "$SESSION" --phase ACT --json "{\"run_id\":\"$SESSION\",\"name\":\"implementation-notes.txt\",\"content\":\"baseline evidence\"}"
+# copy s3_uri
+./aws_tool run complete_task --session "$SESSION" --phase ACT --json "{\"run_id\":\"$SESSION\",\"task_id\":\"<task_id>\",\"agent_id\":\"coder-1\",\"summary\":\"Implemented TODO path\",\"artifact_uri\":\"<s3_uri>\",\"status\":\"success\"}"
+./aws_tool run verify_task --session "$SESSION" --phase VERIFY --json "{\"run_id\":\"$SESSION\",\"task_id\":\"<task_id>\",\"check_type\":\"s3_head_object\",\"artifact_uri\":\"<s3_uri>\"}"
+./aws_tool run neighbors --session "$SESSION" --phase VERIFY --json "{\"run_id\":\"$SESSION\",\"node_id\":\"<task_id>\",\"direction\":\"outbound\"}"
+```
+
+40-60 min: coder implementation pass (Anthropic initializer -> coder)
+- Say: "Now attendees use their coding agent to complete scaffold TODOs with TDD."
+- Say: "Retrieval is agent-invoked; context assembly is agent-native."
 - Attendees run:
 
 ```bash
-make smoke
+./aws_tool run search_nodes --session "$SESSION" --phase PLAN --json "{\"run_id\":\"$SESSION\",\"query\":\"evidence\",\"limit\":5}"
+./aws_tool run get_node --session "$SESSION" --phase PLAN --json "{\"run_id\":\"$SESSION\",\"node_id\":\"<task_id>\"}"
+./aws_tool run neighbors --session "$SESSION" --phase PLAN --json "{\"run_id\":\"$SESSION\",\"node_id\":\"<task_id>\",\"direction\":\"outbound\"}"
 ```
 
-- Ask attendees to keep their `session_id` from smoke output.
+Coder instructions:
+- implement one TODO at a time
+- write or run a test for each TODO
+- attach evidence artifacts/receipts
+- do not promote without verify evidence
 
-40-55 min: inspect outputs
-- Say: "Now inspect the context pack and evidence files produced by smoke."
-- Attendees run:
+Verification ladder for facilitators:
+- Level 1: schema/phase checks pass
+- Level 2: deterministic checks pass (read-back/head/test command)
+- Level 3: objective-level behavior confirmed with linked evidence
 
-```bash
-ls -l context_pack_before.json context_pack_after.json context_pack.json
-cat context_pack_before.json
-cat context_pack_after.json
-```
+60-80 min: swarm lifecycle (same primitives, more coordination)
+- Say: "Only coordination changes. Physics do not change."
+- Ask attendees to run 3 agents against the same `SESSION`:
+  - Planner: PLAN tools only
+  - Worker: ACT tools only
+  - Verifier: VERIFY tools only
+- Require all done-claims to include `Receipt` + `Artifact` + `TestResult` linkage.
 
-55-70 min: context compiler strategies
-- Say: "Compare strategy behavior. RECITE is recency-first. GRAPH_FIRST is graph traversal + ranking."
-- Attendees run:
-
-```bash
-make compile STRATEGY=recite SESSION=<session_id> TASK="review verification evidence"
-cat context_pack.json
-make compile STRATEGY=graph_first SESSION=<session_id> TASK="review verification evidence"
-cat context_pack.json
-```
-
-70-80 min: troubleshooting block
+80-90 min: troubleshooting + wrap
 - Say: "If you are blocked, classify your issue first: identity, region, IAM, or resources."
 - Have each blocked attendee run:
 
@@ -76,15 +96,7 @@ cat context_pack.json
 aws sts get-caller-identity
 aws dynamodb describe-table --table-name GraphNodes
 aws dynamodb describe-table --table-name GraphEdges
-aws s3api head-bucket --bucket <workshop-bucket>
-```
-
-80-90 min: wrap and evidence review
-- Say: "Success criteria: doctor pass, smoke pass, and changed context pack after verify evidence."
-- Attendees run:
-
-```bash
-grep -n "SMOKE PASS" -n logs/* 2>/dev/null || true
+aws s3api head-bucket --bucket <artifact-bucket>
 ```
 
 ## What to Say at Each Checkpoint
@@ -93,16 +105,16 @@ CP0 (setup):
 - "Region + identity first. No credentials, no progress."
 
 CP1 (doctor):
-- "Doctor must pass before smoke; do not skip."
+- "Doctor must pass before we build anything."
 
-CP2 (smoke):
-- "Smoke is intentionally strict; the failure stage is your roadmap."
+CP2 (tasks):
+- "Tasks are the coordination currency. Receipts are the audit trail."
 
-CP3 (compiler):
-- "Selection reasons explain why each context item was included."
+CP3 (coder pass):
+- "Initializer gives scaffold; coder completes TODOs with TDD and evidence."
 
 CP4 (verify):
-- "Validated verification evidence should change what gets selected."
+- "No promotion without evidence. Unverified claims remain candidates, not trusted context."
 
 ## How to Group Stuck Participants
 
@@ -130,3 +142,10 @@ If some workshop accounts fail:
 3. Blocked attendees document expected outputs from shared run and compare with their own once fixed.
 4. Keep everyone on the same checkpoint timing; do not let one subgroup drift too far ahead.
 
+## Optional: Smoke Proof Artifact
+
+If time allows, run the repo golden path:
+
+```bash
+make smoke
+```

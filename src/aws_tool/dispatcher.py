@@ -6,12 +6,13 @@ import hashlib
 import json
 import os
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Callable
 
 from src.artifacts.store import ArtifactStore
 from src.aws_tool.allowlist import get_allowlisted_skills
 from src.aws_tool.aws_cli import run_aws_cli
-from src.graph.compiler import ContextCompiler
+from src.graph.compiler import TYPE_PRIORITY, ContextCompiler
 from src.graph.context_graph import GraphStore
 from src.graph.ontology import validate_constraints
 from src.skills.loader import get_skill_definition
@@ -21,7 +22,7 @@ from src.skills.validator import (
     validate_payload_against_schema,
     validate_phase,
 )
-from src.summarizer.bedrock import summarize_with_bedrock
+from src.summarizer.bedrock import resolve_bedrock_model_identifier, summarize_with_bedrock
 from src.summarizer.fallback import summarize
 
 
@@ -29,6 +30,14 @@ ALIASES = {
     "store_artifact": "upload_artifact",
     "record_receipt": "write_receipt",
 }
+
+
+class GuardrailViolationError(RuntimeError):
+    """Raised when deterministic policy checks fail after assembly."""
+
+    def __init__(self, message: str, output: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.output = output
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -43,8 +52,36 @@ def _json(data: Any) -> str:
     return json.dumps(data, sort_keys=True, default=str, ensure_ascii=True)
 
 
+def _json_safe(value: Any) -> Any:
+    """Convert DynamoDB-native values (e.g. Decimal) into JSON-serializable types."""
+    if isinstance(value, Decimal):
+        return int(value) if value % 1 == 0 else float(value)
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+def _ddb_safe(value: Any) -> Any:
+    """Convert values into DynamoDB-safe scalar/container types."""
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {str(key): _ddb_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_ddb_safe(item) for item in value]
+    return value
+
+
 def _normalize_skill_name(name: str) -> str:
     return ALIASES.get(name, name)
+
+
+def _storage_safe(value: Any, *, mock_mode: bool) -> Any:
+    if mock_mode:
+        return _json_safe(value)
+    return _ddb_safe(value)
 
 
 def _write_provenance(
@@ -73,7 +110,7 @@ def _write_provenance(
         type="SkillCall",
         data={
             "skill_name": skill_name,
-            "inputs": inputs,
+            "inputs": _storage_safe(inputs, mock_mode=graph.mock_mode),
             "started_at": started_at,
             "finished_at": finished_at,
             "exit_code": exit_code,
@@ -102,20 +139,33 @@ def _write_provenance(
         ).encode("utf-8")
     ).hexdigest()
 
+    policy_checks: dict[str, Any] | None = None
+    if isinstance(output, dict):
+        raw_policy = output.get("policy_checks")
+        if isinstance(raw_policy, dict):
+            policy_checks = _json_safe(raw_policy)
+
     summary = f"{skill_name} {'succeeded' if exit_code == 0 else 'failed'}"
+    if policy_checks is not None:
+        summary += f" (policy checks {'pass' if policy_checks.get('passed') else 'fail'})"
     if error_text:
         summary += f": {error_text}"
 
+    receipt_data: dict[str, Any] = {
+        "skill_name": skill_name,
+        "status": "success" if exit_code == 0 else "failure",
+        "summary": summary,
+        "ts_utc": finished_at,
+        "checksum": checksum,
+        "exit_code": exit_code,
+    }
+    if policy_checks is not None:
+        receipt_data["policy_checks"] = policy_checks
+        receipt_data["policy_gate"] = "pass" if policy_checks.get("passed") else "fail"
+
     receipt_id = graph.put_node(
         type="Receipt",
-        data={
-            "skill_name": skill_name,
-            "status": "success" if exit_code == 0 else "failure",
-            "summary": summary,
-            "ts_utc": finished_at,
-            "checksum": checksum,
-            "exit_code": exit_code,
-        },
+        data=receipt_data,
         session_id=session_id,
         validated=exit_code == 0,
     )
@@ -194,12 +244,214 @@ def _write_provenance(
 def _execute_skill_impl(
     skill: str,
     payload: dict[str, Any],
+    phase: str,
     graph: GraphStore,
     artifacts: ArtifactStore,
     mock_mode: bool,
     log: Callable[[str], None],
 ) -> dict[str, Any]:
     run_id = payload.get("run_id", "run-unknown")
+
+    def node_payload(node: dict[str, Any]) -> dict[str, Any]:
+        raw = node.get("data")
+        if not isinstance(raw, dict):
+            return {}
+        return _json_safe(raw)
+
+    def node_timestamp(node: dict[str, Any]) -> datetime:
+        data = node_payload(node)
+        candidates = [
+            node.get("updated_at"),
+            node.get("created_at"),
+            data.get("ts_utc"),
+            data.get("finished_at"),
+            data.get("started_at"),
+        ]
+        for raw in candidates:
+            if not raw:
+                continue
+            try:
+                text = str(raw).replace("Z", "+00:00")
+                parsed = datetime.fromisoformat(text)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed
+            except ValueError:
+                continue
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+
+    def node_summary(node: dict[str, Any]) -> str:
+        data = node_payload(node)
+        for key in ("title", "summary", "text", "name", "skill_name"):
+            if data.get(key):
+                return str(data.get(key))
+        return json.dumps(data, sort_keys=True, default=str)[:220]
+
+    if skill == "assemble_context_view_agent":
+        requested_phase = str(payload.get("phase") or "")
+        if requested_phase != phase:
+            raise SkillValidationError(
+                "assemble_context_view_agent payload phase must match requested --phase "
+                f"('{requested_phase}' != '{phase}')."
+            )
+
+        token_budget = int(payload["token_budget"])
+        compiler = ContextCompiler(graph_store=graph, artifact_store=artifacts, mock_mode=mock_mode)
+        assembled = compiler.assemble_context_view_agent(
+            session_id=run_id,
+            task=str(payload["task"]),
+            phase=phase,
+            token_budget=token_budget,
+            retrieval_hints=payload.get("retrieval_hints"),
+        )
+        checks = assembled.get("policy_checks")
+        if isinstance(checks, dict) and not bool(checks.get("passed")):
+            failed = checks.get("failed_checks")
+            failed_text = ", ".join(str(item) for item in failed) if isinstance(failed, list) else "unknown failure"
+            raise GuardrailViolationError(
+                f"Assembly guardrail checks failed: {failed_text}",
+                output=assembled,
+            )
+
+        log(
+            "Assembled context view with "
+            f"{len(assembled.get('selected_items', []))} items under budget {token_budget}."
+        )
+        return assembled
+
+    if skill == "bedrock_infer":
+        session_key = str(payload.get("session_key") or "default")
+        prompt = str(payload["prompt"])
+        model_id = str(payload.get("model_id") or resolve_bedrock_model_identifier())
+        max_tokens = int(payload.get("max_tokens") or 256)
+        max_history_turns = int(payload.get("max_history_turns") or 8)
+        if max_history_turns < 0:
+            max_history_turns = 0
+        temperature_raw = payload.get("temperature")
+        temperature = float(temperature_raw) if isinstance(temperature_raw, (int, float)) else 0.0
+        reset_session = bool(payload.get("reset_session")) if "reset_session" in payload else False
+        system_prompt_raw = payload.get("system_prompt")
+        system_prompt = str(system_prompt_raw).strip() if isinstance(system_prompt_raw, str) else ""
+
+        session_graph = graph.list_session(run_id)
+        all_nodes = session_graph.get("nodes", [])
+
+        def is_bedrock_turn(node: dict[str, Any]) -> bool:
+            if str(node.get("type")) != "Decision":
+                return False
+            data = node_payload(node)
+            if str(data.get("kind") or "") != "bedrock_turn":
+                return False
+            if str(data.get("session_key") or "default") != session_key:
+                return False
+            return True
+
+        prior_turns = [node for node in all_nodes if is_bedrock_turn(node)]
+        prior_turns.sort(
+            key=lambda node: (
+                int(node_payload(node).get("turn_index", 0)),
+                node_timestamp(node).timestamp(),
+            )
+        )
+
+        history_turns: list[dict[str, Any]] = []
+        if not reset_session:
+            if max_history_turns == 0:
+                history_turns = []
+            else:
+                history_turns = prior_turns[-max_history_turns:]
+
+        messages: list[dict[str, Any]] = []
+        for node in history_turns:
+            data = node_payload(node)
+            previous_prompt = str(data.get("prompt") or "")
+            previous_response = str(data.get("response") or "")
+            if previous_prompt:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": previous_prompt}],
+                    }
+                )
+            if previous_response:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": previous_response}],
+                    }
+                )
+        messages.append(
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": prompt}],
+            }
+        )
+
+        if mock_mode:
+            text_out = f"[mock-bedrock:{session_key}] {prompt[:240]}"
+        else:
+            import boto3
+
+            client = boto3.client("bedrock-runtime")
+            body: dict[str, Any] = {
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "messages": messages,
+            }
+            if system_prompt:
+                body["system"] = [{"type": "text", "text": system_prompt}]
+
+            response = client.invoke_model(
+                modelId=model_id,
+                contentType="application/json",
+                accept="application/json",
+                body=json.dumps(body),
+            )
+            response_payload = json.loads(response["body"].read().decode("utf-8"))
+            chunks = response_payload.get("content", [])
+            text_out = "".join(chunk.get("text", "") for chunk in chunks if isinstance(chunk, dict))
+            if not text_out.strip():
+                raise RuntimeError("Bedrock returned an empty response payload.")
+
+        next_turn_index = 1
+        if prior_turns:
+            latest_data = node_payload(prior_turns[-1])
+            next_turn_index = int(latest_data.get("turn_index", 0)) + 1
+
+        preview = " ".join(text_out.split())
+        if len(preview) > 140:
+            preview = preview[:137] + "..."
+
+        graph.put_node(
+            type="Decision",
+            data={
+                "summary": f"bedrock_infer[{session_key}] turn {next_turn_index}: {preview}",
+                "kind": "bedrock_turn",
+                "session_key": session_key,
+                "turn_index": next_turn_index,
+                "model_id": model_id,
+                "phase": phase,
+                "history_turns_used": len(history_turns),
+                "prompt": prompt,
+                "response": text_out,
+                "ts_utc": _utcnow(),
+            },
+            session_id=run_id,
+            validated=True,
+        )
+        log(
+            "Bedrock inference complete for "
+            f"session_key={session_key}, turn={next_turn_index}, history_used={len(history_turns)}."
+        )
+        return {
+            "text": text_out,
+            "model_id": model_id,
+            "session_key": session_key,
+            "turn_index": next_turn_index,
+            "history_turns_used": len(history_turns),
+            "saved_memory": True,
+        }
 
     if skill == "resolve_identity":
         if mock_mode:
@@ -363,7 +615,310 @@ def _execute_skill_impl(
             "provider": provider,
         }
 
+    if skill == "create_task":
+        state = str(payload.get("state") or "open")
+        task_data: dict[str, Any] = {
+            "title": payload["title"],
+            "description": payload.get("description"),
+            "state": state,
+            "ts_utc": _utcnow(),
+        }
+        task_id = graph.put_node(
+            type="Task",
+            data=task_data,
+            session_id=run_id,
+            validated=False,
+            node_id=payload.get("task_id"),
+        )
+        log(f"Created task {task_id}.")
+        return {"task_id": task_id, "state": state}
+
+    if skill == "claim_task":
+        task_id = str(payload["task_id"])
+        task_node = graph.get_node(task_id)
+        if not task_node or str(task_node.get("type")) != "Task":
+            raise SkillValidationError(f"Task not found or wrong type: {task_id}")
+
+        task_data = node_payload(task_node)
+        task_data.update(
+            {
+                "state": "claimed",
+                "assigned_to": payload["agent_id"],
+                "claimed_at": _utcnow(),
+            }
+        )
+        graph.put_node(
+            type="Task",
+            data=task_data,
+            session_id=run_id,
+            validated=bool(task_node.get("validated")),
+            node_id=task_id,
+        )
+
+        claim_id = graph.put_node(
+            type="Claim",
+            data={
+                "state": str(payload.get("claim_state") or "claimed"),
+                "agent_id": payload["agent_id"],
+                "task_id": task_id,
+                "ts_utc": _utcnow(),
+            },
+            session_id=run_id,
+            validated=True,
+        )
+        graph.put_edge(
+            from_id=claim_id,
+            edge_type="CLAIM_APPLIES_TO",
+            to_id=task_id,
+            session_id=run_id,
+        )
+        log(f"Claimed task {task_id} with claim {claim_id}.")
+        return {"claim_id": claim_id, "task_id": task_id}
+
+    if skill == "complete_task":
+        task_id = str(payload["task_id"])
+        task_node = graph.get_node(task_id)
+        if not task_node or str(task_node.get("type")) != "Task":
+            raise SkillValidationError(f"Task not found or wrong type: {task_id}")
+
+        task_data = node_payload(task_node)
+        task_data.update(
+            {
+                "state": "completed",
+                "completed_by": payload["agent_id"],
+                "completed_at": _utcnow(),
+                "completion_summary": payload["summary"],
+                "completion_status": str(payload.get("status") or "success"),
+                "completion_artifact_uri": payload.get("artifact_uri"),
+            }
+        )
+        graph.put_node(
+            type="Task",
+            data=task_data,
+            session_id=run_id,
+            validated=bool(task_node.get("validated")),
+            node_id=task_id,
+        )
+        log(f"Completed task {task_id} (pending verification).")
+        return {"task_id": task_id, "status": str(payload.get("status") or "success")}
+
+    if skill == "verify_task":
+        task_id = str(payload["task_id"])
+        task_node = graph.get_node(task_id)
+        if not task_node or str(task_node.get("type")) != "Task":
+            raise SkillValidationError(f"Task not found or wrong type: {task_id}")
+
+        check_type = str(payload["check_type"])
+        artifact_uri = str(payload.get("artifact_uri") or "")
+        status = "pass"
+        details: dict[str, Any] = {"check_type": check_type, "artifact_uri": artifact_uri}
+
+        if check_type == "s3_head_object":
+            if not artifact_uri.startswith("s3://"):
+                raise SkillValidationError("verify_task with s3_head_object requires artifact_uri starting with s3://")
+            if mock_mode:
+                details["note"] = "mock_mode: skipped s3 head-object"
+            else:
+                bucket_key = artifact_uri.replace("s3://", "", 1)
+                if "/" not in bucket_key:
+                    raise SkillValidationError("artifact_uri must be of form s3://bucket/key")
+                bucket, key = bucket_key.split("/", 1)
+                cli = run_aws_cli(
+                    ["s3api", "head-object", "--bucket", bucket, "--key", key, "--output", "json"],
+                    expect_json=True,
+                )
+                log(f"Executed AWS CLI: {' '.join(cli.args)}")
+                if cli.exit_code != 0:
+                    status = "fail"
+                    details["error"] = cli.stderr.strip() or cli.stdout.strip() or "s3 head-object failed"
+                elif isinstance(cli.parsed_json, dict):
+                    details["head_object"] = _json_safe(cli.parsed_json)
+        elif check_type == "noop":
+            details["note"] = "noop verification"
+        else:
+            raise SkillValidationError(f"Unsupported verify_task check_type: {check_type}")
+
+        test_result_id = graph.put_node(
+            type="TestResult",
+            data={
+                "status": status,
+                "check_type": check_type,
+                "artifact_uri": artifact_uri or None,
+                "notes": payload.get("notes"),
+                "details": details,
+                "ts_utc": _utcnow(),
+            },
+            session_id=run_id,
+            validated=status == "pass",
+        )
+
+        task_data = node_payload(task_node)
+        task_data.update(
+            {
+                "state": "done" if status == "pass" else "blocked",
+                "verified_at": _utcnow(),
+                "verification_status": status,
+                "verification_test_result_id": test_result_id,
+            }
+        )
+        graph.put_node(
+            type="Task",
+            data=task_data,
+            session_id=run_id,
+            validated=status == "pass",
+            node_id=task_id,
+        )
+
+        log(f"Verified task {task_id}: {status} ({test_result_id}).")
+        return {"test_result_id": test_result_id, "status": status}
+
+    if skill == "search_nodes":
+        query = str(payload["query"]).strip().lower()
+        limit = int(payload.get("limit") or 10)
+        if limit <= 0:
+            limit = 10
+
+        types = payload.get("types")
+        type_filter = {str(t) for t in types} if isinstance(types, list) else None
+        validated_only = bool(payload.get("validated_only")) if "validated_only" in payload else False
+
+        session_graph = graph.list_session(run_id)
+        nodes = session_graph.get("nodes", [])
+
+        def matches(node: dict[str, Any]) -> bool:
+            if type_filter is not None and str(node.get("type")) not in type_filter:
+                return False
+            if validated_only and not bool(node.get("validated")):
+                return False
+            if not query:
+                return True
+            blob = json.dumps(
+                {"type": node.get("type"), "data": node_payload(node)},
+                sort_keys=True,
+                default=str,
+            ).lower()
+            terms = [t for t in query.split() if len(t) >= 3]
+            if not terms:
+                return query in blob
+            return any(t in blob for t in terms)
+
+        matched = [node for node in nodes if matches(node)]
+        matched.sort(
+            key=lambda node: (
+                1 if bool(node.get("validated")) else 0,
+                node_timestamp(node).timestamp(),
+                TYPE_PRIORITY.get(str(node.get("type") or "Unknown"), 30),
+            ),
+            reverse=True,
+        )
+
+        out = []
+        for node in matched[:limit]:
+            out.append(
+                {
+                    "node_id": str(node.get("node_id", "")),
+                    "type": str(node.get("type", "")),
+                    "validated": bool(node.get("validated")),
+                    "ts_utc": node_timestamp(node).isoformat(),
+                    "summary": node_summary(node),
+                }
+            )
+        log(f"search_nodes matched {len(out)} of {len(matched)} candidates.")
+        return {"matches": out}
+
+    if skill == "get_node":
+        node = graph.get_node(str(payload["node_id"]))
+        if not node:
+            raise SkillValidationError(f"Node not found: {payload['node_id']}")
+        return {"node": _json_safe(node)}
+
+    if skill == "neighbors":
+        node_id = str(payload["node_id"])
+        direction = str(payload.get("direction") or "outbound")
+        limit = int(payload.get("limit") or 200)
+        if limit <= 0:
+            limit = 200
+
+        edges = graph.neighbors(node_id) if direction == "outbound" else graph.reverse_neighbors(node_id)
+        edges = [_json_safe(edge) for edge in edges][:limit]
+        return {"edges": edges}
+
+    if skill == "list_tasks":
+        state_filter = payload.get("state")
+        assigned_filter = payload.get("assigned_to")
+        limit = int(payload.get("limit") or 50)
+        if limit <= 0:
+            limit = 50
+
+        session_graph = graph.list_session(run_id)
+        nodes = session_graph.get("nodes", [])
+        tasks = [node for node in nodes if str(node.get("type")) == "Task"]
+        out = []
+        for node in tasks:
+            data = node_payload(node)
+            state = str(data.get("state") or "open")
+            assigned = str(data.get("assigned_to") or "")
+            if state_filter and state != str(state_filter):
+                continue
+            if assigned_filter and assigned != str(assigned_filter):
+                continue
+            out.append(
+                {
+                    "task_id": str(node.get("node_id", "")),
+                    "title": str(data.get("title", "")),
+                    "state": state,
+                    "assigned_to": assigned,
+                    "validated": bool(node.get("validated")),
+                    "updated_at": node_timestamp(node).isoformat(),
+                }
+            )
+        out.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
+        return {"tasks": out[:limit]}
+
     raise RuntimeError(f"No executor implemented for skill '{skill}'.")
+
+
+def _post_provenance_links(
+    *,
+    graph: GraphStore,
+    session_id: str,
+    skill: str,
+    payload: dict[str, Any],
+    output: dict[str, Any],
+    provenance: dict[str, Any],
+) -> None:
+    """Attach coordination edges that depend on the auto-generated provenance receipt."""
+    task_id = payload.get("task_id")
+    if not isinstance(task_id, str) or not task_id:
+        return
+
+    receipt_id = provenance.get("receipt_id")
+    if not isinstance(receipt_id, str) or not receipt_id:
+        return
+
+    if skill in {"claim_task", "complete_task", "verify_task"}:
+        graph.put_edge(
+            from_id=task_id,
+            edge_type="TASK_EVIDENCED_BY",
+            to_id=receipt_id,
+            session_id=session_id,
+        )
+
+    if skill == "verify_task":
+        test_result_id = output.get("test_result_id")
+        if isinstance(test_result_id, str) and test_result_id:
+            graph.put_edge(
+                from_id=task_id,
+                edge_type="TASK_VERIFIED_BY",
+                to_id=test_result_id,
+                session_id=session_id,
+            )
+            graph.put_edge(
+                from_id=test_result_id,
+                edge_type="verified_by",
+                to_id=receipt_id,
+                session_id=session_id,
+            )
 
 
 def execute_skill(
@@ -398,7 +953,19 @@ def execute_skill(
     error_text = ""
 
     try:
-        output = _execute_skill_impl(resolved_skill, payload, graph, artifacts, mock_mode, log)
+        output = _execute_skill_impl(
+            resolved_skill,
+            payload,
+            phase,
+            graph,
+            artifacts,
+            mock_mode,
+            log,
+        )
+    except GuardrailViolationError as exc:
+        exit_code = 1
+        output = exc.output
+        error_text = str(exc)
     except Exception as exc:
         exit_code = 1
         error_text = str(exc)
@@ -423,6 +990,14 @@ def execute_skill(
         raise RuntimeError(error_text)
 
     assert output is not None
+    _post_provenance_links(
+        graph=graph,
+        session_id=session_id,
+        skill=resolved_skill,
+        payload=payload,
+        output=output,
+        provenance=provenance,
+    )
     output.setdefault("receipt_id", provenance["receipt_id"])
     output.setdefault("provenance", provenance)
     validate_output_against_schema(skill_def.get("outputs_schema", {}), output, resolved_skill)

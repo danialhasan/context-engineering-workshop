@@ -78,6 +78,15 @@ edge_types:
   doctor_probe:
     from_types: [DoctorProbe]
     to_types: [DoctorProbe]
+  CLAIM_APPLIES_TO:
+    from_types: [Claim]
+    to_types: [Task]
+  TASK_EVIDENCED_BY:
+    from_types: [Task]
+    to_types: [Receipt]
+  TASK_VERIFIED_BY:
+    from_types: [Task]
+    to_types: [TestResult]
 
 constraints:
   - id: skill_execution_parent_run
