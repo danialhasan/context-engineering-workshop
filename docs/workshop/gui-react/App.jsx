@@ -2198,13 +2198,96 @@ async function parseResponseBody(response) {
   }
 }
 
-async function requestJson(endpoint, options) {
-  const response = await fetch(endpoint, options);
-  const body = await parseResponseBody(response);
-  if (!response.ok) {
-    throw new Error(`${options?.method || "GET"} ${endpoint} failed: ${response.status} ${pretty(body)}`);
+function resolveApiBases() {
+  const bases = [];
+  if (typeof window !== "undefined") {
+    const injectedBase = safeText(window.__CEW_API_BASE_URL).trim();
+    const origin = safeText(window.location?.origin).trim();
+    if (injectedBase) {
+      bases.push(injectedBase);
+    }
+    if (origin && /^https?:\/\//i.test(origin)) {
+      bases.push(origin);
+    }
   }
-  return body;
+
+  const envBase = safeText(import.meta?.env?.VITE_CEW_API_BASE_URL).trim();
+  if (envBase) {
+    bases.push(envBase);
+  }
+
+  bases.push("http://127.0.0.1:8765", "http://127.0.0.1:8876");
+  const unique = [];
+  for (const base of bases) {
+    const normalized = safeText(base).trim().replace(/\/+$/, "");
+    if (!normalized || unique.includes(normalized)) {
+      continue;
+    }
+    unique.push(normalized);
+  }
+  return unique;
+}
+
+function withApiBase(base, endpoint) {
+  const trimmedBase = safeText(base).trim().replace(/\/+$/, "");
+  const path = safeText(endpoint);
+  if (!trimmedBase) {
+    return path;
+  }
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+  return path.startsWith("/") ? `${trimmedBase}${path}` : `${trimmedBase}/${path}`;
+}
+
+function isRetryableFetchError(error) {
+  const message = safeText(error?.message || error).toLowerCase();
+  return message.includes("failed to fetch") || message.includes("networkerror") || message.includes("load failed");
+}
+
+async function requestJson(endpoint, options) {
+  const method = safeText(options?.method || "GET");
+  const path = safeText(endpoint);
+  const isApiPath = path.startsWith("/api/");
+  const targets = isApiPath ? resolveApiBases().map((base) => withApiBase(base, path)) : [path];
+  let lastError = null;
+
+  for (let index = 0; index < targets.length; index += 1) {
+    const target = targets[index];
+    const hasFallback = index < targets.length - 1;
+    try {
+      const response = await fetch(target, options);
+      const body = await parseResponseBody(response);
+      if (!response.ok) {
+        if (isApiPath && hasFallback && response.status === 404) {
+          continue;
+        }
+        throw new Error(`${method} ${target} failed: ${response.status} ${pretty(body)}`);
+      }
+      return body;
+    } catch (error) {
+      lastError = error;
+      if (isApiPath && hasFallback && isRetryableFetchError(error)) {
+        continue;
+      }
+      if (isApiPath && hasFallback) {
+        const message = safeText(error?.message || error);
+        if (message.includes("404")) {
+          continue;
+        }
+      }
+      throw error;
+    }
+  }
+
+  if (isApiPath) {
+    const lastMessage = safeText(lastError?.message || lastError || "unknown error");
+    throw new Error(
+      `Unable to reach workshop API for ${path}. Tried ${targets.length} endpoint(s): ${targets.join(", ")}. Last error: ${lastMessage}`
+    );
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(safeText(lastError || "Request failed"));
 }
 
 function JsonRenderSurface({ spec }) {
@@ -2801,8 +2884,9 @@ export default function App() {
             </div>
           </div>
           <p className={`hint ${requestError ? "is-error" : ""}`}>
-            {requestStatus} Heartbeat auto-refresh runs every 3 seconds while this tab is open.
+            {requestStatus}
           </p>
+          <p className="hint">Heartbeat auto-refresh runs every 3 seconds while this tab is open.</p>
         </section>
       ) : null}
 
